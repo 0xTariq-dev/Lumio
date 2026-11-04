@@ -1,0 +1,1 @@
+- [Veridict worker isolation](veridict-worker-isolation.md) — Keep untrusted URL/email analysis off the public API host; use a separate worker and fresh sandbox per analysis.
