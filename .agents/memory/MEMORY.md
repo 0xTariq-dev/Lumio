@@ -3,4 +3,4 @@
 - [Veridict TypeScript stack](veridict-typescript-stack.md) — Keep the app, control plane, and worker in TypeScript; parse email inside the isolated worker without a Python service.
 - [Veridict report delivery](veridict-report-delivery.md) — Scan email bodies transiently, but never expose or retain them; use HTML/PDF and deterministic progress.
 - [Veridict local-only intelligence](veridict-local-only-intelligence.md) — Keep submitted URLs and emails out of third-party OSINT lookups in the MVP; retain provider research for later evaluation.
-- [Veridict abuse quotas](veridict-abuse-quotas.md) — A lifetime per-IP scan cap needs minimal durable pseudonymous quota data, not stored reports or raw IP logs.
+- [Veridict abuse quotas](veridict-abuse-quotas.md) — Lifetime IP caps use HMAC counters plus a signed browser token, not raw IP logs or invasive fingerprinting.

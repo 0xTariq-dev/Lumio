@@ -5,6 +5,8 @@ description: Permanent per-IP scan limits and the privacy-minimizing persistence
 
 Veridict's MVP quota is two scan starts per IP per minute, five per IP per day, and ten total per IP for the lifetime of that IP. The lifetime cap must survive control-plane restarts, so it requires a minimal durable quota marker even though report content is never stored server-side.
 
-**Why:** The user chose a permanent per-IP ceiling to limit misuse, while also requiring reports to remain inline/local downloads and submitted content to be transient. A stable IP-derived marker is still pseudonymous personal data; shared networks can be blocked together, and VPN or IP changes can evade the cap.
+The implementation also uses a signed, first-party browser token as a second quota key so changing IPs does not immediately reset the browser's cap. This is a random cookie identifier, not a device fingerprint.
 
-**How to apply:** Store a keyed pseudonymous digest and quota counters rather than raw IP addresses or report content. Restrict access, keep raw IPs out of logs, disclose the retention and shared-network effect, and do not add invasive browser/device fingerprinting. Add session, queue, and global-cost controls as complementary abuse signals rather than claiming IP limits defeat VPN rotation.
+**Why:** The user chose a permanent per-IP ceiling to limit misuse and asked for an additional signal against VPN/IP changes, while requiring submitted content and reports to stay transient. A keyed IP or browser marker is still pseudonymous personal data; shared networks can be blocked together, and browser cookies can be reset.
+
+**How to apply:** Store keyed digests and aggregate counters rather than raw IPs, browser tokens, or report content. Keep raw IPs out of logs, disclose counter retention and shared-network effects, use the browser token only as a friction signal, and do not add invasive fingerprinting. Add queue and global-cost controls rather than claiming these caps defeat determined abuse.
