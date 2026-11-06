@@ -1,1 +1,2 @@
 - [Veridict worker isolation](veridict-worker-isolation.md) — Keep untrusted URL/email analysis off the public API host; use a separate worker and fresh sandbox per analysis.
+- [Veridict Coolify deployment](veridict-coolify-deployment.md) — Use Coolify for the Vultr deployment; keep cross-host worker networking explicit.
