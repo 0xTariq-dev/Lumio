@@ -1,2 +1,4 @@
 - [Veridict worker isolation](veridict-worker-isolation.md) — Keep untrusted URL/email analysis off the public API host; use a separate worker and fresh sandbox per analysis.
 - [Veridict Coolify deployment](veridict-coolify-deployment.md) — Use Coolify for the Vultr deployment; keep cross-host worker networking explicit.
+- [Veridict TypeScript stack](veridict-typescript-stack.md) — Keep the app, control plane, and worker in TypeScript; parse email inside the isolated worker without a Python service.
+- [Veridict report delivery](veridict-report-delivery.md) — Offer a self-contained HTML report with browser-native print-to-PDF; stream explanation only after the score is final.
