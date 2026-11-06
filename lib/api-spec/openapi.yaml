@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: analyzer
+    description: Consent-based URL and email analysis
 paths:
   /healthz:
     get:
@@ -24,6 +26,218 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /analysis/status:
+    get:
+      operationId: getAnalysisStatus
+      tags: [analyzer]
+      summary: Get analyzer readiness and limits
+      responses:
+        "200":
+          description: Current analyzer readiness and configured limits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisStatus"
+  /scans/url:
+    post:
+      operationId: createUrlScan
+      tags: [analyzer]
+      summary: Queue a consented URL scan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UrlScanInput"
+      responses:
+        "202":
+          description: Scan accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanAccepted"
+        "400":
+          description: Invalid URL or missing consent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          description: Scan limit or queue capacity reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Isolated worker is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /scans/email:
+    post:
+      operationId: createEmailScan
+      tags: [analyzer]
+      summary: Queue a consented EML scan
+      description: Accepts an .eml file up to 10 MB. The file is processed transiently and is not stored.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/EmailScanInput"
+      responses:
+        "202":
+          description: Scan accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanAccepted"
+        "400":
+          description: Invalid file or missing consent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "413":
+          description: EML file exceeds 10 MB
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          description: Scan limit or queue capacity reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Isolated worker is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /scans/{scanId}:
+    get:
+      operationId: getScan
+      tags: [analyzer]
+      summary: Get a transient scan status snapshot
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Current scan state without a persisted report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanSnapshot"
+        "404":
+          description: Scan expired or is not available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Isolated worker is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /scans/{scanId}/links/{linkId}:
+    post:
+      operationId: createSelectedEmailLinkScan
+      tags: [analyzer]
+      summary: Scan one selected email link after consent
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: linkId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkScanConsent"
+      responses:
+        "202":
+          description: Selected link scan accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanAccepted"
+        "400":
+          description: Missing consent or invalid scan/link reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Scan or selected link expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          description: Scan limit or queue capacity reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Isolated worker is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /scans/{scanId}/events:
+    get:
+      operationId: streamScanEvents
+      tags: [analyzer]
+      summary: Stream transient scan progress and final report
+      description: |
+        Server-Sent Events. Events are `progress` (ScanProgress), `completed` (ScanReport),
+        or `failed` (ApiError). A completed report is delivered to the connected client only
+        and is not retained server-side. EventSource is used by the client for this stream.
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Server-Sent Events stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "404":
+          description: Scan expired or is not available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Isolated worker is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +247,273 @@ components:
           type: string
       required:
         - status
+    AnalysisStatus:
+      type: object
+      required: [workerStatus, scannerAvailable, queue, limits]
+      properties:
+        workerStatus:
+          type: string
+          enum: [ready, unavailable]
+        scannerAvailable:
+          type: boolean
+        queue:
+          $ref: "#/components/schemas/QueueStatus"
+        limits:
+          $ref: "#/components/schemas/ScanLimits"
+    QueueStatus:
+      type: object
+      required: [active, queued, activeLimit, queuedLimit]
+      properties:
+        active:
+          type: integer
+          minimum: 0
+        queued:
+          type: integer
+          minimum: 0
+        activeLimit:
+          type: integer
+          const: 1
+        queuedLimit:
+          type: integer
+          const: 10
+    ScanLimits:
+      type: object
+      required:
+        - maxUrlLength
+        - maxEmailBytes
+        - maxExtractedLinks
+        - browserTimeoutSeconds
+        - sandboxKillSeconds
+        - startsPerMinute
+        - startsPerDay
+        - lifetimeStartsPerIp
+      properties:
+        maxUrlLength:
+          type: integer
+          const: 2048
+        maxEmailBytes:
+          type: integer
+          const: 10485760
+        maxExtractedLinks:
+          type: integer
+          const: 50
+        browserTimeoutSeconds:
+          type: integer
+          const: 90
+        sandboxKillSeconds:
+          type: integer
+          const: 180
+        startsPerMinute:
+          type: integer
+          const: 2
+        startsPerDay:
+          type: integer
+          const: 5
+        lifetimeStartsPerIp:
+          type: integer
+          const: 10
+    UrlScanInput:
+      type: object
+      required: [url, consent]
+      properties:
+        url:
+          type: string
+          format: uri
+          minLength: 8
+          maxLength: 2048
+          pattern: "^https?://"
+        consent:
+          type: boolean
+          enum: [true]
+    EmailScanInput:
+      type: object
+      required: [file, consent]
+      properties:
+        file:
+          type: string
+          format: binary
+          description: An .eml file, at most 10 MB.
+        consent:
+          type: boolean
+          enum: [true]
+    LinkScanConsent:
+      type: object
+      required: [consent]
+      properties:
+        consent:
+          type: boolean
+          enum: [true]
+    ScanAccepted:
+      type: object
+      required: [scanId, status, eventsPath, expiresAt]
+      properties:
+        scanId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, running]
+        eventsPath:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    ScanSnapshot:
+      type: object
+      required: [scanId, type, status, createdAt, expiresAt]
+      properties:
+        scanId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [url, email, email_link]
+        status:
+          type: string
+          enum: [queued, running, completed, failed, cancelled]
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        latestProgress:
+          $ref: "#/components/schemas/ScanProgress"
+    ScanProgress:
+      type: object
+      required: [stage, message, completedSteps, totalSteps]
+      properties:
+        stage:
+          type: string
+          enum:
+            - validating
+            - queued
+            - starting_sandbox
+            - navigating
+            - collecting_evidence
+            - analyzing_email
+            - building_report
+        message:
+          type: string
+          maxLength: 160
+        completedSteps:
+          type: integer
+          minimum: 0
+        totalSteps:
+          type: integer
+          minimum: 1
+    ScanReport:
+      type: object
+      required: [scanId, type, riskBand, completedAt, ruleSetVersion, findings, coverage]
+      properties:
+        scanId:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [url, email, email_link]
+        riskBand:
+          type: string
+          enum: [low, moderate, high, critical, inconclusive]
+        completedAt:
+          type: string
+          format: date-time
+        ruleSetVersion:
+          type: string
+        findings:
+          type: array
+          items:
+            $ref: "#/components/schemas/ScanFinding"
+        coverage:
+          $ref: "#/components/schemas/ScanCoverage"
+        links:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/EmailLink"
+    ScanFinding:
+      type: object
+      required: [id, title, explanation, severity, strength, source]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+          maxLength: 100
+        explanation:
+          type: string
+          maxLength: 500
+        severity:
+          type: string
+          enum: [informational, low, moderate, high, critical]
+        strength:
+          type: string
+          enum: [direct, contextual]
+        source:
+          type: string
+          enum: [url_navigation, browser, email_headers, email_body, attachment_metadata]
+        sanitizedObservedValue:
+          type: ["string", "null"]
+          maxLength: 300
+        limitations:
+          type: array
+          items:
+            type: string
+            maxLength: 200
+    ScanCoverage:
+      type: object
+      required: [sufficient, checks]
+      properties:
+        sufficient:
+          type: boolean
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/CoverageCheck"
+    CoverageCheck:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+          maxLength: 80
+        status:
+          type: string
+          enum: [completed, skipped, blocked, failed]
+        reason:
+          type: ["string", "null"]
+          maxLength: 200
+    EmailLink:
+      type: object
+      required: [linkId, anchorText, displayUrl, targetHost, scanAvailable]
+      properties:
+        linkId:
+          type: string
+          format: uuid
+        anchorText:
+          type: string
+          maxLength: 200
+        displayUrl:
+          type: string
+          maxLength: 300
+          description: Sanitized display URL with query values and fragments redacted.
+        targetHost:
+          type: string
+          maxLength: 253
+        scanAvailable:
+          type: boolean
+    ApiError:
+      type: object
+      required: [code, message, retryable]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+          maxLength: 240
+        retryable:
+          type: boolean
+        retryAfterSeconds:
+          type: ["integer", "null"]
+          minimum: 0
 

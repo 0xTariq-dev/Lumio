@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Veridict"
+description = "A standalone analyzer for people checking suspicious URLs and email messages. It presents a deterministic evidence-backed risk band, supports user-consented URL inspection, and keeps raw submissions transient inside an isolated worker."
+version = "1.0.0"
+id = "artifacts/veridict"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21831
+
+[services.development]
+run = "pnpm --filter @workspace/veridict run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/veridict", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/veridict/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21831"
+BASE_PATH = "/"
