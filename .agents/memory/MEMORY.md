@@ -2,3 +2,4 @@
 - [Veridict Coolify deployment](veridict-coolify-deployment.md) — Use Coolify for the Vultr deployment; keep cross-host worker networking explicit.
 - [Veridict TypeScript stack](veridict-typescript-stack.md) — Keep the app, control plane, and worker in TypeScript; parse email inside the isolated worker without a Python service.
 - [Veridict report delivery](veridict-report-delivery.md) — Offer a self-contained HTML report with browser-native print-to-PDF; stream explanation only after the score is final.
+- [Veridict local-only intelligence](veridict-local-only-intelligence.md) — Keep submitted URLs and emails out of third-party OSINT lookups in the MVP; retain provider research for later evaluation.
