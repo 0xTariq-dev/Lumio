@@ -22,6 +22,17 @@ export interface AgentApprovalRequest {
   browserBinding?: string;
 }
 
+export interface AgentApprovalEvent {
+  type: "approval_required" | "approval_resolved";
+  data: {
+    requestId: string;
+    scanId: string;
+    proposal: AgentProposal;
+    status: AgentApprovalStatus;
+    expiresAt: string;
+  };
+}
+
 export type AgentApprovalResolution =
   | AgentApprovalRequest
   | {
@@ -34,6 +45,7 @@ export type AgentApprovalResolution =
 
 export class AgentApprovalStore {
   private readonly records = new Map<string, AgentApprovalRequest>();
+  private readonly listeners = new Map<string, Set<(event: AgentApprovalEvent) => void>>();
   private readonly now: () => number;
   private readonly lifetimeMs: number;
 
@@ -61,7 +73,23 @@ export class AgentApprovalStore {
       ...(browserToken ? { browserBinding: bindBrowser(browserToken) } : {}),
     };
     this.records.set(request.requestId, request);
+    this.publish({ type: "approval_required", data: this.eventData(request) });
     return request;
+  }
+
+  subscribe(
+    scanId: string,
+    browserToken: string,
+    listener: (event: AgentApprovalEvent) => void,
+  ): () => void {
+    const key = `${scanId}:${bindBrowser(browserToken)}`;
+    const listeners = this.listeners.get(key) ?? new Set();
+    listeners.add(listener);
+    this.listeners.set(key, listeners);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.listeners.delete(key);
+    };
   }
 
   get(scanId: string, requestId: string): AgentApprovalRequest | undefined {
@@ -89,10 +117,9 @@ export class AgentApprovalStore {
     this.expireIfNeeded(request);
     if (request.status !== "pending") return { code: "REQUEST_NOT_PENDING" };
     request.status = decision === "approve" ? "approved" : "declined";
+    this.publish({ type: "approval_resolved", data: this.eventData(request) });
     return request;
   }
-
-  
 
   cancelPending(scanId: string, browserToken?: string): number {
     let cancelled = 0;
@@ -107,6 +134,7 @@ export class AgentApprovalStore {
       this.expireIfNeeded(request);
       if (request.status !== "pending") continue;
       request.status = "cancelled";
+      this.publish({ type: "approval_resolved", data: this.eventData(request) });
       cancelled += 1;
     }
     return cancelled;
@@ -116,6 +144,23 @@ export class AgentApprovalStore {
     if (request.status === "pending" && this.now() >= request.expiresAt) {
       request.status = "expired";
     }
+  }
+
+  private eventData(request: AgentApprovalRequest): AgentApprovalEvent["data"] {
+    return {
+      requestId: request.requestId,
+      scanId: request.scanId,
+      proposal: request.proposal,
+      status: request.status,
+      expiresAt: new Date(request.expiresAt).toISOString(),
+    };
+  }
+
+  private publish(event: AgentApprovalEvent): void {
+    const request = this.records.get(event.data.requestId);
+    if (!request?.browserBinding) return;
+    const listeners = this.listeners.get(`${request.scanId}:${request.browserBinding}`);
+    listeners?.forEach((listener) => listener(event));
   }
 }
 

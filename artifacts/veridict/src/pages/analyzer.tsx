@@ -33,6 +33,13 @@ import { Skeleton } from '@/components/ui/skeleton';
 
 type InputMode = 'url' | 'email';
 type StreamFailure = { message?: string };
+type AgentApprovalEventData = {
+  requestId: string;
+  scanId: string;
+  status: 'pending' | 'approved' | 'declined' | 'cancelled' | 'expired';
+  proposal: AgentApprovalRequest['proposal'];
+  expiresAt: string;
+};
 
 const MAX_EMAIL_BYTES = 10 * 1024 * 1024;
 const ScanProgressStepper = lazy(() =>
@@ -383,6 +390,43 @@ export default function AnalyzerPage() {
       setStreamError('This scan completed, but its transient report is no longer available. Start a new scan to receive a fresh report.');
     }
   }, [scanQuery.data, report]);
+
+  useEffect(() => {
+    if (!activeReport || !streamFinished) return;
+    const eventsUrl = new URL(
+      `/api/scans/${activeReport.scanId}/agent/events`,
+      window.location.origin,
+    );
+    const source = new EventSource(eventsUrl.toString());
+    source.addEventListener('approval_required', (event) => {
+      try {
+        const request = JSON.parse((event as MessageEvent).data) as AgentApprovalEventData;
+        if (request.scanId === activeReport.scanId && request.status === 'pending') {
+          setApprovalRequest(request as AgentApprovalRequest);
+          setApprovalError('');
+        }
+      } catch {
+        setApprovalError('The approval stream returned an unreadable request.');
+      }
+    });
+    source.addEventListener('approval_resolved', (event) => {
+      try {
+        const resolved = JSON.parse((event as MessageEvent).data) as AgentApprovalEventData;
+        if (resolved.requestId === approvalRequest?.requestId) {
+          setApprovalRequest(null);
+          if (resolved.status === 'declined' || resolved.status === 'cancelled') {
+            setApprovalError('The follow-up request was declined. The deterministic report is unchanged.');
+          }
+        }
+      } catch {
+        setApprovalError('The approval stream returned an unreadable resolution.');
+      }
+    });
+    source.onerror = () => {
+      if (approvalRequest) setApprovalError('The approval stream was interrupted. The pending request remains unchanged.');
+    };
+    return () => source.close();
+  }, [activeReport, streamFinished, approvalRequest?.requestId]);
 
   useEffect(() => () => explanationAbortRef.current?.abort(), []);
 

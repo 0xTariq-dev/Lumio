@@ -21,6 +21,48 @@ const proposalTriggerSchema = z.object({
   scanType: z.enum(["url", "email", "email_link"]),
 }).strict();
 
+router.get("/scans/:scanId/agent/events", (req, res) => {
+  const params = scanParamsSchema.safeParse(req.params);
+  if (!params.success) {
+    return sendError(res, 400, "INVALID_SCAN_ID", "The scan reference is invalid.");
+  }
+
+  const browserToken = getOrCreateBrowserToken(req, res);
+  res.status(200).set({
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    "x-accel-buffering": "no",
+  });
+  res.flushHeaders();
+
+  let closed = false;
+  const heartbeat = setInterval(() => res.write(": keep-alive\n\n"), 15_000);
+  const hardTimeout = setTimeout(() => {
+    closed = true;
+    res.end();
+  }, 180_000);
+  const unsubscribe = agentApprovalStore.subscribe(
+    params.data.scanId,
+    browserToken,
+    (event) => {
+      if (closed || res.writableEnded) return;
+      res.write(`event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`);
+      if (event.type === "approval_resolved") {
+        closed = true;
+        res.end();
+      }
+    },
+  );
+  res.on("close", () => {
+    closed = true;
+    clearInterval(heartbeat);
+    clearTimeout(hardTimeout);
+    unsubscribe();
+  });
+  return;
+});
+
 function sendError(
   res: Parameters<Parameters<IRouter["post"]>[1]>[1],
   status: number,

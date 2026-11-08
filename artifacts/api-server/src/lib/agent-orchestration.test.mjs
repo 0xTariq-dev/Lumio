@@ -217,3 +217,23 @@ test("creates a typed email proposal without requesting raw message content", ()
     });
   }
 });
+
+test("publishes browser-scoped approval events when a proposal is created", () => {
+  const store = new AgentApprovalStore({ now: () => 1_000 });
+  const events = [];
+  const unsubscribe = store.subscribe("scan-a", "browser-a", (event) => events.push(event));
+
+  const request = store.create("scan-a", {
+    kind: "tool",
+    tool: "url_http_observation",
+    target: "current_scan",
+    purpose: "Inspect the current redirect chain.",
+    requestedFields: ["redirect_chain"],
+    sendRedactedExcerpt: false,
+  }, "browser-a");
+
+  unsubscribe();
+  assert.equal(events.length, 1);
+  assert.equal(events[0].type, "approval_required");
+  assert.equal(events[0].data.requestId, request.requestId);
+});

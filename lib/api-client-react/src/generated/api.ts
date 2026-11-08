@@ -165,11 +165,6 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
 }
 
 
-
-
-
-
-
 export const getGetAnalysisStatusUrl = () => {
 
 
@@ -1084,3 +1079,98 @@ export const useCancelAgentApprovals = <TError = ErrorType<ApiError>,
       return useMutation(getCancelAgentApprovalsMutationOptions(options), queryClient);
     }
 
+export const getStreamAgentApprovalEventsUrl = (scanId: string,) => {
+
+
+
+
+  return `/api/scans/${scanId}/agent/events`
+}
+
+/**
+ * Streams approval_required and approval_resolved events for this browser-bound scan.
+ * @summary Stream browser-bound agent approval events
+ */
+export const streamAgentApprovalEvents = async (scanId: string, options?: Parameters<typeof customFetch>[1]): Promise<string> => {
+
+  return customFetch<string>(getStreamAgentApprovalEventsUrl(scanId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getStreamAgentApprovalEventsQueryKey = (scanId: string,) => {
+    return [
+    `/api/scans/${scanId}/agent/events`
+    ] as const;
+    }
+
+
+export const getStreamAgentApprovalEventsQueryOptions = <TData = Awaited<ReturnType<typeof streamAgentApprovalEvents>>, TError = ErrorType<ApiError>>(scanId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamAgentApprovalEvents>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getStreamAgentApprovalEventsQueryKey(scanId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof streamAgentApprovalEvents>>> = ({ signal }) => streamAgentApprovalEvents(scanId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: scanId !== null && scanId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof streamAgentApprovalEvents>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type StreamAgentApprovalEventsQueryResult = NonNullable<Awaited<ReturnType<typeof streamAgentApprovalEvents>>>
+export type StreamAgentApprovalEventsQueryError = ErrorType<ApiError>
+
+
+export function useStreamAgentApprovalEvents<TData = Awaited<ReturnType<typeof streamAgentApprovalEvents>>, TError = ErrorType<ApiError>>(
+ scanId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamAgentApprovalEvents>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof streamAgentApprovalEvents>>,
+          TError,
+          Awaited<ReturnType<typeof streamAgentApprovalEvents>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useStreamAgentApprovalEvents<TData = Awaited<ReturnType<typeof streamAgentApprovalEvents>>, TError = ErrorType<ApiError>>(
+ scanId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamAgentApprovalEvents>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof streamAgentApprovalEvents>>,
+          TError,
+          Awaited<ReturnType<typeof streamAgentApprovalEvents>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useStreamAgentApprovalEvents<TData = Awaited<ReturnType<typeof streamAgentApprovalEvents>>, TError = ErrorType<ApiError>>(
+ scanId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamAgentApprovalEvents>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Stream browser-bound agent approval events
+ */
+
+export function useStreamAgentApprovalEvents<TData = Awaited<ReturnType<typeof streamAgentApprovalEvents>>, TError = ErrorType<ApiError>>(
+ scanId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof streamAgentApprovalEvents>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getStreamAgentApprovalEventsQueryOptions(scanId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}

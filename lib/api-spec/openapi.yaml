@@ -432,6 +432,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /scans/{scanId}/agent/events:
+    get:
+      operationId: streamAgentApprovalEvents
+      tags: [analyzer]
+      summary: Stream browser-bound agent approval events
+      description: Streams approval_required and approval_resolved events for this browser-bound scan.
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Server-Sent Events approval stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          description: Invalid scan reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
 components:
   schemas:
     HealthStatus:

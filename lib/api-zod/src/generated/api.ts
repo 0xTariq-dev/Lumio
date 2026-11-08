@@ -253,3 +253,14 @@ export const CancelAgentApprovalsResponse = zod.object({
 })
 
 
+/**
+ * Streams approval_required and approval_resolved events for this browser-bound scan.
+ * @summary Stream browser-bound agent approval events
+ */
+export const StreamAgentApprovalEventsParams = zod.object({
+  "scanId": zod.uuid()
+})
+
+export const StreamAgentApprovalEventsResponse = zod.unknown()
+
+
