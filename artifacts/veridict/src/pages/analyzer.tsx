@@ -65,6 +65,18 @@ function formatDate(value: string) {
 }
 
 function safeErrorMessage(error: unknown) {
+  if (error && typeof error === 'object' && 'data' in error) {
+    const data = (error as { data?: unknown }).data;
+    if (data && typeof data === 'object' && 'code' in data) {
+      const code = String((data as { code?: unknown }).code ?? '');
+      if (code === 'URL_NOT_ALLOWED') {
+        return 'Use a public domain or IP address. Private, reserved, and nonstandard-port targets are not allowed.';
+      }
+      if (code === 'INVALID_URL_SCAN') {
+        return 'Enter a domain, public IP, or HTTP(S) URL under 2,048 characters.';
+      }
+    }
+  }
   if (error && typeof error === 'object' && 'message' in error) {
     const message = String((error as { message?: unknown }).message ?? '');
     if (message.includes('unavailable')) return 'The isolated analysis worker is unavailable. No scan was started.';
@@ -227,19 +239,17 @@ export default function AnalyzerPage() {
       setFormError('Confirm consent before submitting this URL.');
       return;
     }
-    let parsed: URL;
-    try {
-      parsed = new URL(url.trim());
-    } catch {
-      setFormError('Enter a complete URL beginning with https:// or http://.');
+    const target = url.trim();
+    if (!target) {
+      setFormError('Enter a domain, public IP, or HTTP(S) URL.');
       return;
     }
-    if (!['https:', 'http:'].includes(parsed.protocol) || url.trim().length > 2048) {
-      setFormError('Use an HTTP or HTTPS URL under 2,048 characters.');
+    if (target.length > 2048) {
+      setFormError('Use a domain, public IP, or HTTP(S) URL under 2,048 characters.');
       return;
     }
     createUrl.mutate(
-      { data: { url: url.trim(), consent: true } },
+      { data: { url: target, consent: true } },
       {
         onSuccess: (accepted) => beginAccepted(accepted),
         onError: (error) => setFormError(safeErrorMessage(error)),
@@ -370,15 +380,15 @@ export default function AnalyzerPage() {
             <div className="p-5 sm:p-6">
               {mode === 'url' ? (
                 <form onSubmit={handleUrlSubmit} noValidate>
-                  <label htmlFor="url-input" className="mb-2 block text-sm font-medium">Suspicious URL</label>
+                  <label htmlFor="url-input" className="mb-2 block text-sm font-medium">Suspicious domain, IP, or URL</label>
                   <div className="flex min-h-12 items-center gap-2 rounded-lg border border-input bg-background px-3 focus-within:ring-2 focus-within:ring-ring/30">
                     <Globe2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                    <input id="url-input" type="url" inputMode="url" autoComplete="url" value={url} maxLength={2048}
-                      onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com/path"
+                    <input id="url-input" type="text" inputMode="url" autoComplete="url" value={url} maxLength={2048}
+                      onChange={(event) => setUrl(event.target.value)} placeholder="example.com or https://example.com/path"
                       aria-describedby="url-help" data-testid="input-suspicious-url"
                       className="min-w-0 flex-1 bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground/70" />
                   </div>
-                  <p id="url-help" className="mt-2 text-xs text-muted-foreground">HTTP and HTTPS URLs only. Maximum 2,048 characters.</p>
+                  <p id="url-help" className="mt-2 text-xs text-muted-foreground">Bare domains and IPs use HTTPS. Include http:// to request HTTP. Public targets only; maximum 2,048 characters.</p>
                   <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-muted/30 p-3.5 text-sm leading-5">
                     <input type="checkbox" checked={urlConsent} onChange={(event) => setUrlConsent(event.target.checked)}
                       data-testid="checkbox-url-consent" className="mt-0.5 size-4 shrink-0 accent-foreground" />
