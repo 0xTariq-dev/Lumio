@@ -8,3 +8,9 @@ Veridict's execution behavior remains deterministic and policy-constrained. The 
 **Why:** The user explicitly chose to proceed with the MVP inference implementation despite the unresolved provider terms, while keeping the selected redacted-evidence scope.
 
 **How to apply:** Keep the plan fixed and auditable, with no arbitrary tool use, credential entry, form submission, downloads/execution, or active exploitation. Keep inference server-side and explanation-only. Require explicit per-scan opt-in; send only bounded excerpts after deterministic redaction, and never send raw email bodies, full page content, complete/tokenized URLs, email-link lists, or secrets. Validate model output as untrusted and make actual execution/coverage visible. Disclose that provider retention/training terms are unverified.
+
+Vultr's Serverless Inference `/v1/models` endpoint returned HTTP 200 without authorization during testing, so a successful model-catalog request does not prove that the subscription API key is valid.
+
+**Why:** The first synthetic chat-completion request returned HTTP 401 even though the public model catalog was reachable.
+
+**How to apply:** Validate credentials with a minimal synthetic chat-completion request. Never use real scan or email content for credential troubleshooting.
