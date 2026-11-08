@@ -10,11 +10,14 @@ class SafeJSONFormatter(logging.Formatter):
 
     _allowed_fields = (
         "scan_id",
+        "request_id",
         "operation",
         "error_type",
         "active",
         "queued",
         "status_code",
+        "method",
+        "elapsed_ms",
     )
 
     def format(self, record: logging.LogRecord) -> str:

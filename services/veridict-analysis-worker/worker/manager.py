@@ -108,7 +108,7 @@ class ScanManager:
             self._prune_expired()
             existing = self._records.get(scan_id)
             if existing is not None:
-                return existing.status, None
+                return ("queued" if existing.status == "queued" else "running"), None
             if not self.ready:
                 return None, "unavailable"
             if self._queue.full():
@@ -159,7 +159,9 @@ class ScanManager:
         for scan_id in expired:
             self._records.pop(scan_id, None)
 
-    async def _publish_progress(self, record: ScanRecord, stage: str) -> None:
+    async def _publish_progress(
+        self, record: ScanRecord, stage: str, *, status: str | None = None
+    ) -> None:
         progress_stage, message, completed_steps = PROGRESS_MESSAGES[stage]
         progress = ProgressPayload(
             stage=progress_stage,  # type: ignore[arg-type]
@@ -168,12 +170,21 @@ class ScanManager:
             totalSteps=4,
         )
         record.latest_progress = to_jsonable(progress)
-        await self._publish(record, "progress", record.latest_progress)
+        await self._publish(
+            record, "progress", record.latest_progress, status=status
+        )
 
     async def _publish(
-        self, record: ScanRecord, name: str, data: dict[str, Any]
+        self,
+        record: ScanRecord,
+        name: str,
+        data: dict[str, Any],
+        *,
+        status: str | None = None,
     ) -> None:
         async with record.condition:
+            if status is not None:
+                record.status = status
             record.events.append(
                 ScanEvent(
                     event_id=len(record.events) + 1,
@@ -190,13 +201,29 @@ class ScanManager:
             if record is None:
                 self._queue.task_done()
                 continue
+            if record.expires_at <= datetime.now(timezone.utc):
+                await self._publish(
+                    record,
+                    "failed",
+                    {
+                        "code": "ANALYSIS_FAILED",
+                        "message": "This analysis expired before a worker was available.",
+                        "retryable": True,
+                    },
+                    status="failed",
+                )
+                self._queue.task_done()
+                self._prune_expired()
+                continue
             self._active_scan_id = scan_id
-            record.status = "running"
 
             async def progress(stage: str) -> None:
                 await self._publish_progress(record, stage)
 
             try:
+                await self._publish_progress(
+                    record, "starting_sandbox", status="running"
+                )
                 report_data = await self.analyzer.analyze(
                     scan_id, request.url, progress
                 )
@@ -204,10 +231,10 @@ class ScanManager:
                 if str(report.scanId) != scan_id or report.type != "url":
                     raise ValueError("Worker report identity mismatch")
                 record.report = to_jsonable(report)
-                record.status = "completed"
-                await self._publish(record, "completed", record.report)
+                await self._publish(
+                    record, "completed", record.report, status="completed"
+                )
             except asyncio.CancelledError:
-                record.status = "cancelled"
                 await self._publish(
                     record,
                     "failed",
@@ -216,10 +243,10 @@ class ScanManager:
                         "message": "This analysis could not be completed. No report is available.",
                         "retryable": True,
                     },
+                    status="cancelled",
                 )
                 raise
             except Exception as exc:
-                record.status = "failed"
                 self.logger.error(
                     "URL analysis failed",
                     extra={
@@ -236,6 +263,7 @@ class ScanManager:
                         "message": "This analysis could not be completed. No report is available.",
                         "retryable": True,
                     },
+                    status="failed",
                 )
             finally:
                 self._active_scan_id = None
