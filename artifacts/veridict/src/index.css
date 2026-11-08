@@ -374,3 +374,31 @@
     inset: -1px;
   }
 }
+
+@keyframes hero-appear {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.hero-appear { opacity: 0; animation: hero-appear 0.5s ease-out forwards; }
+.hero-delay-100 { animation-delay: 100ms; }
+.hero-delay-300 { animation-delay: 300ms; }
+.hero-delay-700 { animation-delay: 700ms; }
+.hero-glow {
+  background: radial-gradient(ellipse at center, color-mix(in oklab, var(--primary) 28%, transparent), transparent 70%);
+  filter: blur(40px);
+}
+.shell-stage {
+  transform-origin: top center;
+  transition: transform 0.8s cubic-bezier(0.22, 1, 0.36, 1), filter 0.8s ease, opacity 0.8s ease, box-shadow 0.8s ease;
+}
+.shell-preview {
+  transform: perspective(1400px) rotateX(14deg) scale(0.94);
+  filter: saturate(0.85);
+  opacity: 0.92;
+  box-shadow: 0 30px 80px -30px color-mix(in oklab, var(--foreground) 35%, transparent);
+}
+.shell-active { transform: none; filter: none; opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .hero-appear { animation: none; opacity: 1; }
+  .shell-stage { transition: none; }
+}

@@ -18,6 +18,7 @@ import {
 import type { AgentActionResult, AgentApprovalRequest, ScanAccepted, ScanCancellation, ScanProgress, ScanReport } from '@workspace/api-client-react';
 import {
   AlertCircle,
+  ArrowRight,
   ArrowUpRight,
   CheckCircle2,
   CircleAlert,
@@ -468,6 +469,12 @@ function ScanProgressLoadingSkeleton() {
 
 export default function AnalyzerPage() {
   const queryClient = useQueryClient();
+  const [shellActive, setShellActive] = useState(false);
+  const shellRef = useRef<HTMLElement | null>(null);
+  const activateShell = () => {
+    setShellActive(true);
+    window.setTimeout(() => shellRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 120);
+  };
   const statusQuery = useGetAnalysisStatus({
     query: { queryKey: getGetAnalysisStatusQueryKey(), refetchInterval: 15000 },
   });
@@ -1478,15 +1485,27 @@ export default function AnalyzerPage() {
         </div>
       </header>
       <main className="mx-auto max-w-5xl px-4 pb-10 pt-8 sm:px-6 sm:pt-11">
-        <section className="mb-7 max-w-3xl">
-          <h1 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">Bringing threats to light. Investigate first, click later.</h1>
-          <p className="mt-3 text-sm leading-6 text-muted-foreground sm:text-base">Private, consent-based checks run in an isolated worker. Lumio reports observable evidence and coverage limits—not a promise of safety.</p>
+        <section className="relative mb-10 flex flex-col items-center gap-6 pt-6 text-center sm:gap-8 sm:pt-12" data-testid="hero">
+          <a href="#workspace" onClick={(e) => { e.preventDefault(); activateShell(); }} className="hero-appear inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium">
+            <span className="text-muted-foreground">Consent-based threat checks</span>
+            <span className="flex items-center gap-1">How it works <ArrowRight className="size-3" aria-hidden="true" /></span>
+          </a>
+          <h1 className="hero-appear relative z-10 max-w-4xl text-balance bg-gradient-to-r from-foreground to-muted-foreground bg-clip-text text-4xl font-semibold leading-tight tracking-tight text-transparent sm:text-6xl sm:leading-tight">Bringing threats to light. Investigate first, click later.</h1>
+          <p className="hero-appear hero-delay-100 relative z-10 max-w-[560px] text-sm font-medium leading-6 text-muted-foreground sm:text-lg">Private, consent-based checks run in an isolated worker. Lumio reports observable evidence and coverage limits—not a promise of safety.</p>
+          <div className="hero-appear hero-delay-300 relative z-10 flex flex-wrap justify-center gap-3">
+            <button type="button" onClick={activateShell} data-testid="button-get-started" className="inline-flex min-h-11 items-center gap-2 rounded-md bg-primary px-6 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90">Get started <ArrowRight className="size-4" aria-hidden="true" /></button>
+            <a href="https://github.com/0xTariq-dev/Lumio" target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border bg-card px-6 text-sm font-medium hover:bg-muted">View source</a>
+          </div>
         </section>
         {stopNotice && <aside role="alert" aria-live="assertive" className="mb-5 flex flex-col gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 sm:flex-row sm:items-center sm:justify-between" data-testid="status-stop-unconfirmed">
           <div><p className="text-sm font-semibold">{stopNotice.message}</p>{(stopNotice.pendingAcceptanceCount ?? 0) > 0 && <p className="mt-1 text-xs leading-5 text-muted-foreground">Waiting for {stopNotice.pendingAcceptanceCount} in-flight submission{stopNotice.pendingAcceptanceCount === 1 ? '' : 's'} to return an acceptance before a stop request can be sent.</p>}</div>
           {(stopNotice.scanIds.length > 0 || stopNotice.approvalIds.length > 0) && <button type="button" onClick={() => void retryStopNotice()} disabled={cancelScan.isPending || cancelAgentApprovals.isPending} className="min-h-11 shrink-0 rounded-md border border-destructive/30 bg-background px-4 text-sm font-medium hover:bg-destructive/5 disabled:opacity-50" data-testid="button-retry-stop">Retry stop request</button>}
         </aside>}
-        <section className="mx-auto max-w-4xl overflow-hidden rounded-2xl border border-border bg-card shadow-sm" aria-label="Investigation conversation">
+        <div className="relative hero-appear hero-delay-700">
+        <div aria-hidden="true" className={`hero-glow pointer-events-none absolute inset-x-0 -top-16 mx-auto h-64 max-w-3xl transition-opacity duration-700 ${shellActive ? 'opacity-40' : 'opacity-100'}`} />
+        <div className={`relative z-10 mx-auto max-w-4xl rounded-2xl transition-all duration-700 ease-out ${shellActive ? 'p-0' : 'bg-accent/30 p-2'}`}>
+        <section id="workspace" ref={shellRef} inert={!shellActive ? true : undefined}
+          className={`shell-stage overflow-hidden rounded-2xl border border-border bg-card shadow-sm ${shellActive ? 'shell-active' : 'shell-preview cursor-pointer'}`} aria-label="Investigation conversation">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3.5 sm:px-6">
             <div><h2 className="text-base font-semibold tracking-tight">Investigation workspace</h2><p className="mt-0.5 text-xs text-muted-foreground">One temporary conversation. Nothing here is saved after this tab closes.</p></div>
             {sessionConsent && <button type="button" onClick={withdrawConsent} data-testid="button-withdraw-consent" className="min-h-10 rounded-md px-3 text-xs font-medium text-muted-foreground underline-offset-4 hover:bg-muted hover:text-foreground hover:underline">Withdraw consent and clear</button>}
@@ -1557,25 +1576,27 @@ export default function AnalyzerPage() {
               {!!Object.keys(batchStates).length && <section className="mt-5 rounded-xl border border-border bg-muted/20 p-4" aria-label="Selected link scan batch" data-testid="selected-link-batch"><div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold">Selected link scans</h3>{Object.values(batchStates).some((item) => ['submitting', 'accepted', 'queued', 'running'].includes(item.status)) && <button type="button" onClick={() => void cancelRemainingBatch()} disabled={cancelScan.isPending} className="min-h-10 rounded-md border border-input px-3 text-xs font-medium hover:bg-muted disabled:opacity-50" data-testid="button-cancel-link-batch">Stop remaining scans</button>}</div><ul className="mt-3 space-y-2">{Object.entries(batchStates).map(([id, item]) => <li key={id} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm" data-testid={`batch-link-${id}`}><span className="min-w-0 flex-1 break-all">{batchLabels[id] || 'Selected link'}<span className="ml-2 text-xs text-muted-foreground">{item.reason ?? (item.status === 'running' ? 'Worker is analyzing this link.' : '')}</span></span><span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-xs capitalize">{item.status}</span></li>)}</ul></section>}
             </div>
             <div className="border-t border-border bg-card p-3 sm:p-4">
-              <label className="mx-auto mb-2 flex max-w-3xl cursor-pointer items-start gap-2 px-1 text-xs leading-5 text-muted-foreground" data-testid="label-agent-review-opt-in">
-                <input type="checkbox" checked={agentReviewOptIn} disabled={busy} onChange={(event) => setAgentReviewOptIn(event.target.checked)}
-                  data-testid="checkbox-agent-review" className="mt-0.5 size-4 shrink-0 accent-foreground" />
-                <span><strong className="font-medium text-foreground">Ask me before follow-up checks.</strong> Before the report is ready, Lumio may propose up to three extra steps, such as visiting one email link. Nothing runs without your approval, and the pause lasts at most 3 minutes.</span>
-              </label>
               <CInputGroup18
                 message={chatNote}
                 attachment={attachment}
                 disabled={busy || workerUnavailable || statusQuery.isLoading || statusQuery.isError}
                 onMessageChange={(value) => { setChatNote(value); setFormError(''); }}
                 onAttachmentChange={(value) => { setAttachment(value); setFormError(''); }}
-                onSubmit={(message, selectedAttachment) => requestSubmit(message, selectedAttachment)}
+                reviewOptIn={agentReviewOptIn}
+                summaryEnabled={summaryConsent}
+                onReviewOptInChange={setAgentReviewOptIn}
+                onSummaryChange={setSummaryConsent}
+                 onSubmit={(message, selectedAttachment) => requestSubmit(message, selectedAttachment)}
                 onError={setFormError}
               />
-              {status?.scanQuota.enabled && <p className="mx-auto mt-2 max-w-3xl px-1 text-[11px] text-muted-foreground" data-testid="status-scan-quota">Usage · Today {status.scanQuota.daily.used ?? '—'}/{status.scanQuota.daily.total} · Lifetime {status.scanQuota.lifetime.used ?? '—'}/{status.scanQuota.lifetime.total}</p>}
+              {status?.scanQuota?.enabled && <p className="mx-auto mt-2 max-w-3xl px-1 text-[11px] text-muted-foreground" data-testid="status-scan-quota">Usage · Today {status.scanQuota.daily.used ?? '—'}/{status.scanQuota.daily.total} · Lifetime {status.scanQuota.lifetime.used ?? '—'}/{status.scanQuota.lifetime.total}</p>}
               {status?.queue && <p className="mx-auto mt-1 max-w-3xl px-1 text-[11px] text-muted-foreground" data-testid="text-queue-status">Queue · {status.queue.active} active of {status.queue.activeLimit} · {status.queue.queued} waiting of {status.queue.queuedLimit}</p>}
             </div>
           </div>
         </section>
+        {!shellActive && <button type="button" onClick={activateShell} aria-label="Open the investigation workspace" className="absolute inset-0 z-20 rounded-2xl" data-testid="button-open-shell" />}
+        </div>
+        </div>
         <footer className="mx-auto mt-6 flex max-w-4xl flex-col justify-between gap-2 border-t border-border pt-4 text-xs text-muted-foreground sm:flex-row"><span>Lumio reports evidence, not certainty.</span><span>Reports and email content are not stored. One-way IP/browser counters enforce scan limits.</span></footer>
       </main>
       <Dialog open={consentDialogOpen} onOpenChange={(open) => { setConsentDialogOpen(open); if (!open) submissionRef.current = null; }}>
