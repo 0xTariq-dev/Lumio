@@ -13,6 +13,7 @@ from playwright.async_api import async_playwright
 from scrapling.core.utils import log as scrapling_log
 from scrapling.fetchers import FetcherSession
 
+from guest.rea_observer import observe_browser
 from shared.url_policy import (
     URLPolicyError,
     hostname_for_url,
@@ -224,7 +225,11 @@ async def _browser_evidence(
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(
             headless=True,
-            args=["--disable-dev-shm-usage"],
+            args=[
+                "--disable-dev-shm-usage",
+                "--remote-debugging-address=127.0.0.1",
+                "--remote-debugging-port=9222",
+            ],
         )
         try:
             context = await browser.new_context(
@@ -326,6 +331,7 @@ async def _browser_evidence(
                     }
                 )
 
+            rea_observation = await observe_browser(final_url)
             return (
                 {
                     "status": response.status if response else 0,
@@ -339,6 +345,7 @@ async def _browser_evidence(
                     "pageErrorCount": page_errors,
                     "requestFailureCount": request_failures,
                     "strippedBrowserQuery": stripped_browser_query,
+                    "reaObservation": rea_observation,
                 },
                 None,
             )
@@ -390,6 +397,7 @@ def _build_report(
     checks: list[dict[str, Any]] = []
     initial_url = normalize_public_http_url(raw_url)
     initial_host = hostname_for_url(initial_url)
+    needs_browser = False
     redirect_hosts = [
         hostname_for_url(item) for item in redirect_urls if item
     ] or [initial_host]
@@ -684,6 +692,73 @@ def _build_report(
                 "reason": "Some analysis coverage was reduced by the privacy policy.",
             }
         )
+
+    if not needs_browser:
+        checks.append(
+            {
+                "name": "rea_passive_observation",
+                "status": "skipped",
+                "reason": "No browser session was required for this URL.",
+            }
+        )
+    elif browser_failed or browser is None:
+        checks.append(
+            {
+                "name": "rea_passive_observation",
+                "status": "skipped",
+                "reason": "No completed Chromium session was available to inspect.",
+            }
+        )
+    else:
+        rea_observation = browser.get("reaObservation")
+        if (
+            isinstance(rea_observation, dict)
+            and rea_observation.get("status") == "completed"
+        ):
+            completeness = rea_observation.get("completeness")
+            counts = rea_observation.get("counts")
+            count_labels = (
+                ("domNodes", "DOM nodes"),
+                ("scripts", "scripts"),
+                ("resources", "resources"),
+                ("networkRequests", "network requests"),
+            )
+            count_summary = [
+                f"{label}: {counts[key]}"
+                for key, label in count_labels
+                if isinstance(counts, dict)
+                and type(counts.get(key)) is int
+                and 0 <= counts[key] <= 100_000
+            ]
+            details = ", ".join(count_summary) or "bounded page structure captured"
+            if isinstance(completeness, str) and completeness in {
+                "complete_within_window",
+                "policy_filtered",
+                "attach_limited",
+                "truncated",
+            }:
+                details = f"{completeness}; {details}"
+            checks.append(
+                {
+                    "name": "rea_passive_observation",
+                    "status": "completed",
+                    "reason": (
+                        f"REA passively inspected the same Chromium session via CDP "
+                        f"({details}). Raw page evidence was discarded."
+                    ),
+                }
+            )
+        else:
+            checks.append(
+                {
+                    "name": "rea_passive_observation",
+                    "status": "failed",
+                    "reason": (
+                        "REA's optional passive capture did not complete; the "
+                        "Playwright scan results were retained."
+                    ),
+                }
+            )
 
     if not sufficient:
         risk_band = "inconclusive"

@@ -6,6 +6,19 @@ from analysis. URL scans and consented email-link scans run in new, disposable
 Microsandbox VMs; `.eml` parsing runs in a fresh guest with networking disabled.
 The worker host itself must have working KVM support.
 
+## Runtime split
+
+| Location | Runtime and responsibility |
+| --- | --- |
+| App/control-plane VM | React/Vite UI, TypeScript API, Postgres quota state, consent and report delivery. It does not execute submitted pages or parse email content. |
+| Native worker VM | Private Python supervisor/API, queue handling, KVM and Microsandbox lifecycle, and progress/result relay. It dispatches transient inputs but does not run page or email analysis natively. |
+| Disposable guest VM per scan | Python 3.12, Scrapling, and Playwright/Chromium. URL guests use restricted public HTTP(S) egress; email guests have no network. Guests receive no secrets and are destroyed after each scan. |
+| REA within URL guests | Node 24 and pinned `rea-agents` run only as a passive CDP observer of the same Chromium session. REA does not navigate or evaluate the page. Only bounded numeric counts and a completeness label enter the report; raw URLs and captured page evidence are discarded. |
+
+The REA dependency and Dockerfile changes are source-side until a new guest
+image is built, digest-pinned, and loaded on the Vultr worker. The currently
+deployed worker image is not changed by edits in this repository.
+
 Veridict's own code is licensed under MIT; see the repository `LICENSE`.
 Third-party package licenses, including the worker's unmodified MPL-2.0
 `certifi` dependency, are listed in `THIRD_PARTY_NOTICES.md`.
@@ -35,6 +48,11 @@ Third-party package licenses, including the worker's unmodified MPL-2.0
   submissions, rejects non-read methods, blocks images/fonts/media, and caps
   page requests. It records metadata and counts only; page text, error messages,
   raw form values, cookies, and response bodies are not placed in reports.
+- When JavaScript inspection runs, REA attaches to that same guest Chromium over
+  loopback CDP after navigation. It does not make a second visit. The default
+  capture does not request accessibility text, script sources, console text,
+  storage keys, JSON bodies, or WebSocket payload shapes. Raw REA output is
+  discarded after extracting bounded counts and completeness status.
 - Reports omit URL paths, queries, and fragments. Raw email content and
   addresses are transient processing inputs, not report fields or log data.
   Reports are held in worker memory for 15 minutes and are not written to a
