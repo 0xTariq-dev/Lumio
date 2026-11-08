@@ -220,6 +220,13 @@ class ScanManager:
         self._prune_expired()
         return self._records.get(scan_id)
 
+    def report(self, scan_id: str) -> dict[str, Any] | None:
+        self._prune_expired()
+        record = self._records.get(scan_id)
+        if record is None or record.status != "completed":
+            return None
+        return record.report
+
     def _prune_expired(self) -> None:
         now = datetime.now(timezone.utc)
         expired = [

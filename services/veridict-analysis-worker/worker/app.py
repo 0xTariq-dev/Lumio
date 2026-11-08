@@ -255,6 +255,17 @@ def create_app(
             return _error(404, "SCAN_NOT_FOUND", "The analysis was not found.")
         return snapshot
 
+    @app.get("/v1/scans/{scan_id}/report")
+    async def get_report(scan_id: str):
+        try:
+            normalized_id = str(UUID(scan_id))
+        except ValueError:
+            return _error(404, "SCAN_NOT_FOUND", "The analysis was not found.")
+        report = manager.report(normalized_id)
+        if report is None:
+            return _error(404, "REPORT_NOT_FOUND", "The completed report is not available.")
+        return report
+
     @app.get("/v1/scans/{scan_id}/events")
     async def scan_events(scan_id: str, request: Request):
         try:

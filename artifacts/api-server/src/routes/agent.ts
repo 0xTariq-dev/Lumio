@@ -5,8 +5,10 @@ import {
   agentApprovalStore,
   createAgentApprovalRequest,
 } from "../lib/agent-approval";
-import { fetchWorkerScan } from "../lib/analysis-worker";
+import { fetchWorkerReport, fetchWorkerScan } from "../lib/analysis-worker";
 import { createLocalAgentProposal } from "../lib/agent-orchestration";
+import { getVultrInferenceConfig } from "../lib/serverless-inference";
+import { requestAgentProposal } from "../lib/agent-inference";
 
 const router: IRouter = Router();
 const approvalParamsSchema = z.object({
@@ -113,7 +115,33 @@ router.post("/scans/:scanId/agent/proposals", async (req, res) => {
     );
   }
 
-  const proposal = createLocalAgentProposal(body.data.scanType);
+  let proposal = createLocalAgentProposal(body.data.scanType);
+  if (process.env.VERIDICT_AGENT_INFERENCE_ENABLED === "true") {
+    const config = getVultrInferenceConfig();
+    if (!config) {
+      return sendError(
+        res,
+        503,
+        "AGENT_INFERENCE_UNAVAILABLE",
+        "The agent proposal service is not configured.",
+      );
+    }
+    const reportResult = await fetchWorkerReport(params.data.scanId);
+    if (reportResult.kind === "not_found") {
+      return sendError(res, 404, "REPORT_NOT_FOUND", "The completed report is no longer available.");
+    }
+    if (reportResult.kind === "unavailable") {
+      return sendError(res, 503, "ANALYSIS_WORKER_UNAVAILABLE", "The completed report is temporarily unavailable.");
+    }
+    try {
+      proposal = await requestAgentProposal(config, reportResult.report, {
+        scanType: body.data.scanType,
+        hasSelectedEmailLink: body.data.scanType === "email_link",
+      });
+    } catch {
+      return sendError(res, 503, "AGENT_INFERENCE_FAILED", "No follow-up proposal is available.");
+    }
+  }
   if (!proposal.ok) {
     return sendError(
       res,

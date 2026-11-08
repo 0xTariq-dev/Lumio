@@ -17,6 +17,33 @@ const WorkerAcceptedSchema = z.object({
   status: z.enum(["queued", "running"]),
 });
 
+const WorkerReportSchema = z.object({
+  scanId: z.uuid(),
+  type: z.enum(["url", "email", "email_link"]),
+  riskBand: z.enum(["low", "moderate", "high", "critical", "inconclusive"]),
+  completedAt: z.string(),
+  ruleSetVersion: z.string(),
+  findings: z.array(z.object({
+    title: z.string(),
+    explanation: z.string(),
+    severity: z.enum(["informational", "low", "moderate", "high", "critical"]),
+    strength: z.enum(["direct", "contextual"]),
+    source: z.enum(["url_navigation", "browser", "email_headers", "email_body", "attachment_metadata"]),
+    sanitizedObservedValue: z.string().nullable().optional(),
+    limitations: z.array(z.string()).optional(),
+  })),
+  coverage: z.object({
+    sufficient: z.boolean(),
+    checks: z.array(z.object({
+      name: z.string(),
+      status: z.enum(["completed", "skipped", "blocked", "failed"]),
+      reason: z.string().nullable().optional(),
+    })),
+  }),
+});
+
+export type WorkerReport = z.infer<typeof WorkerReportSchema>;
+
 export type WorkerHealth = z.infer<typeof WorkerHealthSchema>;
 
 export type WorkerScanInput =
@@ -196,6 +223,29 @@ export async function fetchWorkerScan(
     const parsed = GetScanResponse.safeParse(await response.json());
     if (!parsed.success) return { kind: "unavailable" };
     return { kind: "found", scan: parsed.data };
+  } catch {
+    return { kind: "unavailable" };
+  }
+}
+
+export async function fetchWorkerReport(
+  scanId: string,
+): Promise<
+  | { kind: "found"; report: WorkerReport }
+  | { kind: "not_found" }
+  | { kind: "unavailable" }
+> {
+  const config = loadWorkerConfig();
+  if (!config) return { kind: "unavailable" };
+  try {
+    const response = await fetch(endpointUrl(config.baseUrl, `/v1/scans/${encodeURIComponent(scanId)}/report`), {
+      headers: workerHeaders(config.token),
+      signal: AbortSignal.timeout(3_000),
+    });
+    if (response.status === 404) return { kind: "not_found" };
+    if (!response.ok) return { kind: "unavailable" };
+    const parsed = WorkerReportSchema.safeParse(await response.json());
+    return parsed.success ? { kind: "found", report: parsed.data } : { kind: "unavailable" };
   } catch {
     return { kind: "unavailable" };
   }
