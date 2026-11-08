@@ -20,6 +20,7 @@ export function SummarySpeechControl({
   const [state, setState] = useState<SummarySpeechState>("idle");
   const [error, setError] = useState("");
   const errorId = `speech-status-${scanId}`;
+  const disclosureId = `speech-disclosure-${scanId}`;
 
   useEffect(() => {
     const player = createBrowserSummarySpeechPlayer(
@@ -51,7 +52,7 @@ export function SummarySpeechControl({
         onClick={() => void playerRef.current?.toggle()}
         disabled={isLoading}
         aria-label={label}
-        aria-describedby={error ? errorId : undefined}
+        aria-describedby={error ? `${disclosureId} ${errorId}` : disclosureId}
         aria-pressed={isPlaying}
         aria-busy={isLoading}
         data-testid={`button-summary-speech-${scanId}`}
@@ -70,7 +71,7 @@ export function SummarySpeechControl({
             ? "Stop audio"
             : "Play summary"}
       </button>
-      <p className="text-xs leading-5 text-muted-foreground">
+      <p id={disclosureId} className="text-xs leading-5 text-muted-foreground">
         Clicking Play sends this summary to Vultr for speech generation. The
         audio stays in this tab.
       </p>
