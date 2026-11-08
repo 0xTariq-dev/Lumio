@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { validateAgentProposal } from "./agent-orchestration.ts";
 import { AgentApprovalStore } from "./agent-approval.ts";
+import { createLocalAgentProposal } from "./agent-proposal.ts";
 
 const urlContext = {
   scanType: "url",
@@ -190,4 +191,30 @@ test("binds approval resolution to the browser that received it", () => {
     store.resolve("scan-a", request.requestId, "approve", "browser-a").status,
     "approved",
   );
+});
+
+test("creates a deterministic URL proposal through the same validator", () => {
+  const result = createLocalAgentProposal("url");
+
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.proposal.kind, "tool");
+    assert.equal(result.proposal.tool, "url_browser_observation");
+    assert.equal(result.requiresApproval, true);
+  }
+});
+
+test("creates a typed email proposal without requesting raw message content", () => {
+  const result = createLocalAgentProposal("email");
+
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.deepEqual(result.proposal, {
+      kind: "data",
+      target: "current_scan",
+      purpose: "Request authentication and header coverage.",
+      fields: ["authentication_results", "header_metadata"],
+      sendRedactedExcerpt: true,
+    });
+  }
 });
