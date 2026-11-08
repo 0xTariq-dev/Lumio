@@ -82,10 +82,11 @@ test("Vultr stream sends bounded chat requests without tools and forwards text o
   const response = new Response(
     new ReadableStream({
       start(controller) {
-        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"Cautious "}}]}\n\n'));
-        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"explanation."}}]}\n\n'));
-        controller.enqueue(encoder.encode('data: {"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":8}}\n\n'));
-        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"reasoning":"not for the user"}}]}\r\n\r\n'));
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"Cautious "}}]}\r\n\r\n'));
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"explanation."}}]}\r\n\r\n'));
+        controller.enqueue(encoder.encode('data: {"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":8}}\r\n\r\n'));
+        controller.enqueue(encoder.encode("data: [DONE]\r\n\r\n"));
         controller.close();
       },
     }),
@@ -111,5 +112,6 @@ test("Vultr stream sends bounded chat requests without tools and forwards text o
   assert.equal(requestBody.model, DEFAULT_VULTR_INFERENCE_MODEL);
   assert.equal(requestBody.stream, true);
   assert.equal(requestBody.max_completion_tokens, 220);
+  assert.deepEqual(requestBody.chat_template_kwargs, { enable_thinking: false });
   assert.equal("tools" in requestBody, false);
 });

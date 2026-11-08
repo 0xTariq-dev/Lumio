@@ -283,6 +283,7 @@ export async function streamVultrExplanation(
         stream: true,
         max_completion_tokens: 220,
         temperature: 0.2,
+        chat_template_kwargs: { enable_thinking: false },
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           {
@@ -374,13 +375,13 @@ export async function streamVultrExplanation(
       if (buffer.length > 64 * 1024) {
         throw new VultrInferenceError("Inference stream exceeded its size limit");
       }
-      let boundary = buffer.indexOf("\n\n");
-      while (boundary >= 0) {
-        const block = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
+      let boundary = /\r?\n\r?\n/.exec(buffer);
+      while (boundary) {
+        const block = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary[0].length);
         consumeBlock(block);
         if (finished) break;
-        boundary = buffer.indexOf("\n\n");
+        boundary = /\r?\n\r?\n/.exec(buffer);
       }
       if (chunk.done) {
         if (buffer.trim()) consumeBlock(buffer);

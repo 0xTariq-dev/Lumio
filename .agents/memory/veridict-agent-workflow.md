@@ -20,3 +20,9 @@ Do not use Vultr's account-level `POST /v2/apikeys` endpoint as the Serverless I
 **Why:** The official Vultr documentation distinguishes current-user API key creation from each subscription's own inference API key.
 
 **How to apply:** Use the subscription's **Copy API Key** action in its Overview, or have the account owner retrieve its `api_key` through the documented read-only inference-detail endpoint. Keep account-control and model-inference credentials separate.
+
+Vultr's `qwen3.8-flash-next` defaults to thinking mode; with a small completion cap it can spend every token on `reasoning` deltas and return no user-facing answer. On Vultr, `chat_template_kwargs: { enable_thinking: false }` produced concise visible text.
+
+**Why:** A synthetic stream exhausted the 220-token cap with reasoning-only output until thinking mode was disabled.
+
+**How to apply:** Keep thinking disabled for this short explanation feature, ignore reasoning deltas, and forward only bounded `content` text to the browser.
