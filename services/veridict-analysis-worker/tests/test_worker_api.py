@@ -15,8 +15,9 @@ IMAGE = "registry.example/veridict-guest@sha256:" + "a" * 64
 
 
 class FakeAnalyzer:
-    def __init__(self, *, block=False):
+    def __init__(self, *, block=False, redirect_blocked=False):
         self.block = block
+        self.redirect_blocked = redirect_blocked
         self.started = asyncio.Event()
         self.release = asyncio.Event()
         self.email_link_id = uuid4()
@@ -80,7 +81,10 @@ class FakeAnalyzer:
                 "sufficient": True,
                 "checks": [
                     {"name": "http_response", "status": "completed"},
-                    {"name": "redirect_chain", "status": "completed"},
+                    {
+                        "name": "redirect_chain",
+                        "status": "blocked" if self.redirect_blocked else "completed",
+                    },
                     {"name": "static_html", "status": "completed"},
                     {"name": "browser_observation", "status": "skipped"},
                 ],
@@ -344,6 +348,10 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(b'"riskBand":"low"', event_body)
             self.assertIn(b'"id":"browser","status":"skipped"', event_body)
             self.assertIn(b'"executionPlan":[', event_body)
+            report = completed_report(event_body)
+            for step in report["executionPlan"]:
+                if step["id"] != "consent_target" and step["status"] == "completed":
+                    self.assertNotIn("reasonCode", step)
 
             scan_status, _, scan_body = await asgi_request(
                 self.app,
@@ -355,6 +363,34 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(scan_status, 200)
             self.assertEqual(parsed["status"], "completed")
             self.assertNotIn("report", parsed)
+
+    async def test_private_redirect_is_marked_blocked_in_execution_plan(self):
+        self.analyzer.redirect_blocked = True
+        scan_id = uuid4()
+        async with self.app.router.lifespan_context(self.app):
+            status, _, body = await asgi_request(
+                self.app,
+                "POST",
+                "/v1/scans",
+                headers=request_headers(),
+                body=json.dumps(scan_payload(scan_id)).encode(),
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["accepted"], True)
+            await self.analyzer.started.wait()
+
+            _, _, event_body = await asgi_request(
+                self.app,
+                "GET",
+                f"/v1/scans/{scan_id}/events",
+                headers={"authorization": f"Bearer {TOKEN}"},
+            )
+            report = completed_report(event_body)
+            http_step = next(
+                step for step in report["executionPlan"] if step["id"] == "http"
+            )
+            self.assertEqual(http_step["status"], "blocked")
+            self.assertEqual(http_step["reasonCode"], "redirect_blocked")
 
     async def test_queue_capacity_rejects_new_work(self):
         self.analyzer.block = True

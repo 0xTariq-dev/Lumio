@@ -392,7 +392,7 @@ class ScanManager:
                     mapped_reason = None
                     if status_value == "failed":
                         mapped_reason = (
-                            "http_fetch_failed" if step_id == "http"
+                            fallback_reason or "http_fetch_failed" if step_id == "http"
                             else "browser_error" if step_id == "browser"
                             else "analysis_failed"
                         )
@@ -408,7 +408,7 @@ class ScanManager:
                             else "no_browser_required"
                         )
                     else:
-                        mapped_reason = fallback_reason
+                        mapped_reason = None
                     set_step(step_id, status_value, mapped_reason)
                     return status_value
 
