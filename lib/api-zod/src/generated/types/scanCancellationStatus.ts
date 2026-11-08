@@ -12,8 +12,7 @@ export type ScanCancellationStatus = typeof ScanCancellationStatus[keyof typeof 
 export const ScanCancellationStatus = {
   queued: 'queued',
   running: 'running',
-  cancelling: 'cancelling',
-  cancelled: 'cancelled',
   completed: 'completed',
   failed: 'failed',
+  cancelled: 'cancelled',
 } as const;

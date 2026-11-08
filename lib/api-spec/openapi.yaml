@@ -152,8 +152,8 @@ paths:
     post:
       operationId: cancelScan
       tags: [analyzer]
-      summary: Cancel an active scan
-      description: Stops an active isolated scan and returns a partial report when available.
+      summary: Cancel one queued or running scan
+      description: Stops worker work for one scan. Completed reports remain unchanged.
       parameters:
         - name: scanId
           in: path
@@ -175,13 +175,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
         "404":
-          description: Scan not found
+          description: Scan is not available
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
         "503":
-          description: Analysis worker unavailable
+          description: Isolated worker is unavailable
           content:
             application/json:
               schema:
@@ -229,9 +229,10 @@ paths:
       tags: [analyzer]
       summary: Stream an optional explanation of a completed report
       description: |
-        Requires separate per-scan consent and a short-lived, browser-bound
-        evidence token. Sends only a bounded, redacted evidence summary to
-        Vultr Serverless Inference. The explanation cannot alter the report.
+        Requires explicit session consent and a short-lived, browser-bound
+        evidence token. Sends a bounded, redacted evidence summary and an
+        optional sanitized user note to Vultr Serverless Inference. The model
+        has no tools and cannot alter the deterministic report.
       parameters:
         - name: scanId
           in: path
@@ -350,7 +351,7 @@ paths:
       summary: Stream transient scan progress and final report
       description: |
         Server-Sent Events. Events are `progress` (ScanProgress), `completed` (ScanReport),
-        or `failed` (ApiError). A completed report is delivered to the connected client only
+        `failed` (ApiError), or `cancelled` (ScanCancellationNotice). A completed report is delivered to the connected client only
         and is not retained server-side. EventSource is used by the client for this stream.
       parameters:
         - name: scanId
@@ -672,6 +673,10 @@ components:
           type: string
           minLength: 1
           maxLength: 12000
+        userMessage:
+          type: string
+          maxLength: 1200
+          description: Optional user context. Common URLs, hosts, contact details, and credential patterns are redacted before inference.
     AgentApprovalDecisionInput:
       type: object
       required: [decision]
@@ -730,18 +735,6 @@ components:
         cancelledApprovalRequests:
           type: integer
           minimum: 0
-    ScanCancellation:
-      type: object
-      required: [scanId, status, cancelled]
-      properties:
-        scanId:
-          type: string
-          format: uuid
-        status:
-          type: string
-          enum: [queued, running, cancelling, cancelled, completed, failed]
-        cancelled:
-          type: boolean
     ScanAccepted:
       type: object
       required: [scanId, status, eventsPath, expiresAt]
@@ -757,6 +750,30 @@ components:
         expiresAt:
           type: string
           format: date-time
+    ScanCancellation:
+      type: object
+      required: [scanId, cancelled, status]
+      properties:
+        scanId:
+          type: string
+          format: uuid
+        cancelled:
+          type: boolean
+        status:
+          type: string
+          enum: [queued, running, completed, failed, cancelled]
+    ScanCancellationNotice:
+      type: object
+      required: [code, message, retryable]
+      properties:
+        code:
+          type: string
+          enum: [SCAN_CANCELLED]
+        message:
+          type: string
+          maxLength: 160
+        retryable:
+          type: boolean
     ScanSnapshot:
       type: object
       required: [scanId, type, status, createdAt, expiresAt]

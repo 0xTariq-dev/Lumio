@@ -217,120 +217,6 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("x-request-id", headers)
             self.assertEqual(json.loads(body)["error"]["code"], "UNAUTHORIZED")
 
-    async def test_active_cancellation_stops_analyzer_and_returns_partial_report(self):
-        analyzer = CancellableAnalyzer()
-        app = create_app(self.settings, analyzer)
-        scan_id = uuid4()
-        async with app.router.lifespan_context(app):
-            status, _, body = await asgi_request(
-                app,
-                "POST",
-                "/v1/scans",
-                headers=request_headers(),
-                body=json.dumps(scan_payload(scan_id)).encode(),
-            )
-            self.assertEqual(status, 200)
-            await analyzer.started.wait()
-
-            status, _, body = await asgi_request(
-                app,
-                "POST",
-                f"/v1/scans/{scan_id}/cancel",
-                headers=request_headers(),
-            )
-            self.assertEqual(status, 200)
-            self.assertEqual(json.loads(body)["status"], "cancelling")
-            self.assertTrue(json.loads(body)["cancelled"])
-            await asyncio.wait_for(analyzer.cleaned.wait(), timeout=1)
-
-            status, _, event_body = await asgi_request(
-                app,
-                "GET",
-                f"/v1/scans/{scan_id}/events",
-                headers={"authorization": f"Bearer {TOKEN}"},
-            )
-            self.assertEqual(status, 200)
-            report = completed_report(event_body)
-            self.assertTrue(report["partial"])
-            self.assertEqual(report["riskBand"], "inconclusive")
-            self.assertEqual(report["findings"], [])
-            self.assertIn("cancelled", report["partialReason"].lower())
-
-            status, _, body = await asgi_request(
-                app,
-                "GET",
-                f"/v1/scans/{scan_id}",
-                headers={"authorization": f"Bearer {TOKEN}"},
-            )
-            self.assertEqual(status, 200)
-            self.assertEqual(json.loads(body)["status"], "cancelled")
-
-            status, _, body = await asgi_request(
-                app,
-                "GET",
-                f"/v1/scans/{scan_id}/report",
-                headers={"authorization": f"Bearer {TOKEN}"},
-            )
-            self.assertEqual(status, 200)
-            self.assertTrue(json.loads(body)["partial"])
-
-    async def test_queued_email_cancellation_scrubs_input_before_worker_reaches_it(self):
-        analyzer = CancellableAnalyzer()
-        app = create_app(self.settings, analyzer)
-        active_scan_id = uuid4()
-        email_scan_id = uuid4()
-        async with app.router.lifespan_context(app):
-            status, _, _ = await asgi_request(
-                app,
-                "POST",
-                "/v1/scans",
-                headers=request_headers(),
-                body=json.dumps(scan_payload(active_scan_id)).encode(),
-            )
-            self.assertEqual(status, 200)
-            await analyzer.started.wait()
-
-            status, _, _ = await asgi_request(
-                app,
-                "POST",
-                "/v1/scans",
-                headers=request_headers(),
-                body=json.dumps(email_payload(email_scan_id)).encode(),
-            )
-            self.assertEqual(status, 200)
-            manager = app.state.scan_manager
-            queued_record = manager._records[str(email_scan_id)]
-            queued_request = queued_record.pending_email_request
-            self.assertIsNotNone(queued_request)
-            self.assertTrue(queued_request.emailBase64)
-
-            status, _, body = await asgi_request(
-                app,
-                "POST",
-                f"/v1/scans/{email_scan_id}/cancel",
-                headers=request_headers(),
-            )
-            self.assertEqual(status, 200)
-            self.assertEqual(json.loads(body)["status"], "cancelled")
-            self.assertEqual(queued_request.emailBase64, "")
-            self.assertIsNone(queued_record.pending_email_request)
-
-            await asgi_request(
-                app,
-                "POST",
-                f"/v1/scans/{active_scan_id}/cancel",
-                headers=request_headers(),
-            )
-            await asyncio.wait_for(manager._queue.join(), timeout=1)
-            status, _, body = await asgi_request(
-                app,
-                "GET",
-                f"/v1/scans/{email_scan_id}/report",
-                headers={"authorization": f"Bearer {TOKEN}"},
-            )
-            self.assertEqual(status, 200)
-            self.assertTrue(json.loads(body)["partial"])
-
     async def test_accepts_email_and_rejects_unsupported_or_private_targets(self):
         async with self.app.router.lifespan_context(self.app):
             status, _, body = await asgi_request(
@@ -565,6 +451,74 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
 
             self.analyzer.release.set()
 
+    async def test_cancel_stops_running_work_and_removes_queued_work(self):
+        self.analyzer.block = True
+        running_id = uuid4()
+        queued_id = uuid4()
+        async with self.app.router.lifespan_context(self.app):
+            status, _, body = await asgi_request(
+                self.app,
+                "POST",
+                "/v1/scans",
+                headers=request_headers(),
+                body=json.dumps(scan_payload(running_id)).encode(),
+            )
+            self.assertEqual(status, 200)
+            await self.analyzer.started.wait()
+
+            status, _, body = await asgi_request(
+                self.app,
+                "POST",
+                "/v1/scans",
+                headers=request_headers(),
+                body=json.dumps(email_payload(queued_id)).encode(),
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["status"], "queued")
+            queued_request = self.app.state.scan_manager._queue._queue[0][1]
+            self.assertTrue(queued_request.emailBase64)
+
+            status, _, body = await asgi_request(
+                self.app,
+                "POST",
+                f"/v1/scans/{queued_id}/cancel",
+                headers=request_headers(),
+            )
+            queued_cancellation = json.loads(body)
+            self.assertEqual(status, 200)
+            self.assertTrue(queued_cancellation["cancelled"])
+            self.assertEqual(queued_cancellation["status"], "cancelled")
+            self.assertEqual(queued_request.emailBase64, "")
+
+            status, _, body = await asgi_request(
+                self.app,
+                "POST",
+                f"/v1/scans/{running_id}/cancel",
+                headers=request_headers(),
+            )
+            running_cancellation = json.loads(body)
+            self.assertEqual(status, 200)
+            self.assertTrue(running_cancellation["cancelled"])
+            self.assertEqual(running_cancellation["status"], "cancelled")
+
+            _, _, events = await asgi_request(
+                self.app,
+                "GET",
+                f"/v1/scans/{running_id}/events",
+                headers={"authorization": f"Bearer {TOKEN}"},
+            )
+            self.assertIn(b"event: cancelled", events)
+            self.assertNotIn(b"event: completed", events)
+
+            manager = self.app.state.scan_manager
+            self.assertEqual(manager.active_count, 0)
+            self.assertEqual(manager.queued_count, 0)
+            health_status, _, health_body = await asgi_request(
+                self.app, "GET", "/healthz", headers=request_headers()
+            )
+            self.assertEqual(health_status, 200)
+            self.assertEqual(json.loads(health_body)["status"], "ready")
+
     async def _assert_email_scan_failure_cleanup(self, failure):
         self.analyzer.fail_next = failure
         failed_scan_id = uuid4()
@@ -667,7 +621,7 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
                 headers={"authorization": f"Bearer {TOKEN}"},
             )
             self.assertEqual(event_status, 200)
-            self.assertIn(b"event: failed", event_body)
+            self.assertIn(b"event: cancelled", event_body)
             self.assertNotIn(b"private body", event_body)
             self.assertNotIn(b"sender@example.com", event_body)
 

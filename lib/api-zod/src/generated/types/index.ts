@@ -30,6 +30,8 @@ export * from './queueStatus';
 export * from './scanAccepted';
 export * from './scanAcceptedStatus';
 export * from './scanCancellation';
+export * from './scanCancellationNotice';
+export * from './scanCancellationNoticeCode';
 export * from './scanCancellationStatus';
 export * from './scanCoverage';
 export * from './scanFinding';

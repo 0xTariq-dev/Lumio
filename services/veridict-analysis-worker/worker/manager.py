@@ -88,8 +88,6 @@ class ScanRecord:
     expires_at: datetime
     latest_progress: dict[str, Any] | None = None
     report: dict[str, Any] | None = None
-    cancel_requested: bool = False
-    pending_email_request: EmailScanRequest | None = field(default=None, repr=False)
     private_links: dict[str, str] = field(default_factory=dict, repr=False)
     events: list[ScanEvent] = field(default_factory=list)
     condition: asyncio.Condition = field(default_factory=asyncio.Condition, repr=False)
@@ -111,7 +109,6 @@ class ScanManager:
         self._records: dict[str, ScanRecord] = {}
         self._accept_lock = asyncio.Lock()
         self._worker_task: asyncio.Task[None] | None = None
-        self._active_analysis_task: asyncio.Task[dict[str, Any]] | None = None
         self._active_scan_id: str | None = None
         self.ready = False
 
@@ -138,6 +135,70 @@ class ScanManager:
             except asyncio.CancelledError:
                 pass
             self._worker_task = None
+
+    async def cancel(self, scan_id: str) -> tuple[bool, str]:
+        """Cancel one queued or running scan without stopping the worker service."""
+        async with self._accept_lock:
+            self._prune_expired()
+            record = self._records.get(scan_id)
+            if record is None:
+                return False, "not_found"
+            if record.status in TERMINAL_STATUSES:
+                return False, record.status
+
+            if record.status == "queued":
+                retained: list[tuple[str, AnalysisRequest]] = []
+                removed_request: AnalysisRequest | None = None
+                while True:
+                    try:
+                        queued_scan_id, request = self._queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    self._queue.task_done()
+                    if queued_scan_id == scan_id:
+                        removed_request = request
+                    else:
+                        retained.append((queued_scan_id, request))
+                for item in retained:
+                    self._queue.put_nowait(item)
+                if removed_request is not None:
+                    self._clear_email_request(removed_request)
+                    await self._publish_cancellation(record)
+                    return True, "cancelled"
+
+            if self._active_scan_id != scan_id or self._worker_task is None:
+                return False, record.status
+
+            worker_task = self._worker_task
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
+            if self.ready:
+                self._worker_task = asyncio.create_task(
+                    self._serve(), name="scan-worker"
+                )
+            return True, "cancelled"
+
+    @staticmethod
+    def _clear_email_request(request: AnalysisRequest) -> None:
+        if isinstance(request, EmailScanRequest):
+            request.emailBase64 = ""
+
+    async def _publish_cancellation(self, record: ScanRecord) -> None:
+        record.private_links.clear()
+        await self._publish_progress(record, "failed", status="cancelled")
+        await self._publish(
+            record,
+            "cancelled",
+            {
+                "code": "SCAN_CANCELLED",
+                "message": "This scan was cancelled. Any completed batch results remain available.",
+                "retryable": True,
+            },
+            status="cancelled",
+        )
 
     @property
     def active_count(self) -> int:
@@ -194,11 +255,6 @@ class ScanManager:
                 status="queued",
                 created_at=now,
                 expires_at=now + timedelta(seconds=self.settings.report_ttl_seconds),
-                pending_email_request=(
-                    analysis_request
-                    if isinstance(analysis_request, EmailScanRequest)
-                    else None
-                ),
             )
             self._records[scan_id] = record
             await self._publish_progress(record, "queued")
@@ -234,80 +290,6 @@ class ScanManager:
         if record is None or record.status not in {"completed", "cancelled"}:
             return None
         return record.report
-
-    async def cancel_scan(self, scan_id: str) -> str | None:
-        self._prune_expired()
-        record = self._records.get(scan_id)
-        if record is None:
-            return None
-        if record.status in TERMINAL_STATUSES or record.report is not None:
-            return record.status
-
-        record.cancel_requested = True
-        record.private_links.clear()
-        if record.status == "queued":
-            if record.pending_email_request is not None:
-                record.pending_email_request.emailBase64 = ""
-                record.pending_email_request = None
-            record.report = self._partial_report(record)
-            await self._publish_progress(record, "failed", status="cancelled")
-            await self._publish(
-                record,
-                "completed",
-                record.report,
-                status="cancelled",
-            )
-            return "cancelled"
-
-        if record.status == "running" and self._active_scan_id == scan_id:
-            if self._active_analysis_task is not None:
-                self._active_analysis_task.cancel()
-            return "cancelling"
-        return record.status
-
-    @staticmethod
-    def _partial_report(record: ScanRecord) -> dict[str, Any]:
-        progress = record.latest_progress or {}
-        progress_plan = progress.get("plan")
-        template = EMAIL_PLAN_TEMPLATE if record.scan_type == "email" else PLAN_TEMPLATE
-        plan = [
-            dict(step)
-            for step in progress_plan
-            if isinstance(step, dict)
-        ] if isinstance(progress_plan, list) else [dict(step) for step in template]
-        for step in plan:
-            if step.get("status") == "running":
-                step["status"] = "failed"
-                step["reasonCode"] = "analysis_failed"
-            elif step.get("status") == "pending":
-                step["status"] = "skipped"
-                step["reasonCode"] = "earlier_step_failed"
-
-        report = ScanReport(
-            scanId=UUID(record.scan_id),
-            type=record.scan_type,  # type: ignore[arg-type]
-            riskBand="inconclusive",
-            completedAt=datetime.now(timezone.utc),
-            ruleSetVersion="veridict-partial-v1",
-            findings=[],
-            coverage={
-                "sufficient": False,
-                "checks": [
-                    {
-                        "name": "analysis_cancelled",
-                        "status": "failed",
-                        "reason": (
-                            "The scan was cancelled before a complete report was "
-                            "assembled; no findings are available."
-                        ),
-                    }
-                ],
-            },
-            partial=True,
-            partialReason="Cancelled by the user before report assembly completed.",
-            executionPlan=plan,
-        )
-        return to_jsonable(report)
 
     def _prune_expired(self) -> None:
         now = datetime.now(timezone.utc)
@@ -575,12 +557,6 @@ class ScanManager:
             if record is None:
                 self._queue.task_done()
                 continue
-            if record.status != "queued":
-                if isinstance(request, EmailScanRequest):
-                    request.emailBase64 = ""
-                record.pending_email_request = None
-                self._queue.task_done()
-                continue
             if record.expires_at <= datetime.now(timezone.utc):
                 await self._publish(
                     record,
@@ -606,31 +582,21 @@ class ScanManager:
                     record, stage, reason_code=reason_code
                 )
 
-            analysis_task: asyncio.Task[dict[str, Any]] | None = None
             try:
                 await self._publish_progress(
                     record, "starting_sandbox", status="running"
                 )
-                if record.cancel_requested:
-                    raise asyncio.CancelledError()
                 task_plan = (
                     EMAIL_PLAN_ACTIONS
                     if record.scan_type == "email"
                     else URL_PLAN_ACTIONS
                 )
-                analysis_task = asyncio.create_task(
-                    self.analyzer.analyze(
-                        scan_id,
-                        request,
-                        list(task_plan),
-                        progress,
-                    ),
-                    name=f"analysis-{scan_id}",
+                report_data = await self.analyzer.analyze(
+                    scan_id,
+                    request,
+                    list(task_plan),
+                    progress,
                 )
-                self._active_analysis_task = analysis_task
-                report_data = await asyncio.shield(analysis_task)
-                if record.cancel_requested:
-                    raise asyncio.CancelledError()
                 private_links = report_data.pop("_privateLinks", None)
                 if record.scan_type == "email":
                     record.private_links = self._private_link_targets(
@@ -655,41 +621,8 @@ class ScanManager:
                     record, "completed", record.report, status="completed"
                 )
             except asyncio.CancelledError:
-                current_task = asyncio.current_task()
-                if current_task is not None and current_task.cancelling():
-                    if analysis_task is not None and not analysis_task.done():
-                        analysis_task.cancel()
-                    if analysis_task is not None:
-                        try:
-                            await analysis_task
-                        except asyncio.CancelledError:
-                            pass
-                    await self._publish_progress(
-                        record, "failed", status="cancelled"
-                    )
-                    await self._publish(
-                        record,
-                        "failed",
-                        {
-                            "code": "ANALYSIS_FAILED",
-                            "message": (
-                                "This analysis was interrupted while the worker "
-                                "was stopping. No report is available."
-                            ),
-                            "retryable": True,
-                        },
-                        status="cancelled",
-                    )
-                    raise
-
-                record.report = self._partial_report(record)
-                await self._publish_progress(record, "failed", status="cancelled")
-                await self._publish(
-                    record,
-                    "completed",
-                    record.report,
-                    status="cancelled",
-                )
+                await self._publish_cancellation(record)
+                raise
             except Exception as exc:
                 self.logger.error(
                     "Analysis failed",
@@ -711,10 +644,7 @@ class ScanManager:
                     status="failed",
                 )
             finally:
-                if isinstance(request, EmailScanRequest):
-                    request.emailBase64 = ""
-                record.pending_email_request = None
-                self._active_analysis_task = None
+                self._clear_email_request(request)
                 self._active_scan_id = None
                 self._queue.task_done()
                 self._prune_expired()

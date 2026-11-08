@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isTerminalAnalysisEvent,
+  toPublicWorkerCancellationEvent,
   toPublicWorkerFailureEvent,
 } from "./analysis-event-safety.ts";
 
@@ -28,4 +29,22 @@ test("worker failure payloads are replaced with a safe terminal event", () => {
 test("progress events do not terminate the public stream", () => {
   assert.equal(isTerminalAnalysisEvent("progress"), false);
   assert.equal(isTerminalAnalysisEvent("completed"), true);
+  assert.equal(isTerminalAnalysisEvent("cancelled"), true);
+});
+
+test("worker cancellation payloads are replaced with a safe terminal event", () => {
+  const event = toPublicWorkerCancellationEvent({
+    message: "internal worker detail",
+    rawEmail: "private content",
+  });
+
+  assert.deepEqual(event, {
+    event: "cancelled",
+    data: {
+      code: "SCAN_CANCELLED",
+      message: "This scan was cancelled. Completed results remain available.",
+      retryable: true,
+    },
+  });
+  assert.equal(JSON.stringify(event).includes("private content"), false);
 });

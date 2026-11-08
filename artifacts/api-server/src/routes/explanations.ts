@@ -40,6 +40,7 @@ interface AuthorizedExplanation {
   claims: ExplanationClaims;
   config: VultrInferenceConfig;
   tokenId: string;
+  userMessage: string;
 }
 
 function sendError(
@@ -116,7 +117,12 @@ function validateExplanationRequest(
   const tokenId = createHash("sha256")
     .update(body.data.explanationToken)
     .digest("hex");
-  res.locals.authorizedExplanation = { claims, config, tokenId } satisfies AuthorizedExplanation;
+  res.locals.authorizedExplanation = {
+    claims,
+    config,
+    tokenId,
+    userMessage: body.data.userMessage ?? "",
+  } satisfies AuthorizedExplanation;
   next();
 }
 
@@ -177,7 +183,7 @@ router.use(
 router.post(
   "/scans/:scanId/explanation/stream",
   async (req, res): Promise<void> => {
-    const { claims, config, tokenId } = res.locals
+    const { claims, config, tokenId, userMessage } = res.locals
       .authorizedExplanation as AuthorizedExplanation;
     pruneConsumedTokens(Date.now());
     if (consumedTokens.has(tokenId) || inFlightTokens.has(tokenId)) {
@@ -236,6 +242,7 @@ router.post(
           consumedTokens.set(tokenId, claims.expiresAt);
           writeEvent(res, "delta", { text: delta });
         },
+        { userMessage },
       );
       if (clientDisconnected) return;
       if (outputChars === 0 || result.outputChars !== outputChars) {

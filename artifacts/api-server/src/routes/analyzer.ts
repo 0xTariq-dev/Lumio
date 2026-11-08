@@ -27,6 +27,7 @@ import {
 import {
   isTerminalAnalysisEvent,
   toPublicWorkerFailureEvent,
+  toPublicWorkerCancellationEvent,
 } from "../lib/analysis-event-safety";
 import { normalizeScanTargetInput } from "../lib/normalize-target";
 import {
@@ -670,22 +671,25 @@ router.get("/scans/:scanId", async (req, res) => {
 router.post("/scans/:scanId/cancel", async (req, res) => {
   const params = GetScanParams.safeParse(req.params);
   if (!params.success) {
-    return sendApiError(res, 400, "INVALID_SCAN_ID", "The scan reference is invalid.");
+    sendApiError(res, 400, "INVALID_SCAN_ID", "The scan reference is invalid.");
+    return;
   }
   const result = await cancelWorkerScan(params.data.scanId);
   if (result.kind === "not_found") {
-    return sendApiError(res, 404, "SCAN_NOT_FOUND", "This scan is no longer available.");
+    sendApiError(res, 404, "SCAN_NOT_FOUND", "This scan is no longer available.");
+    return;
   }
   if (result.kind === "unavailable") {
-    return sendApiError(
+    sendApiError(
       res,
       503,
       "ANALYSIS_WORKER_UNAVAILABLE",
-      "The scan could not be cancelled right now.",
+      "The scan could not be cancelled because the isolated worker is unavailable.",
       true,
     );
+    return;
   }
-  return res.json(result.cancellation);
+  res.json(result.cancellation);
 });
 
 router.get("/scans/:scanId/report", async (req, res) => {
@@ -797,6 +801,9 @@ function parseEventBlock(
   }
   if (eventName === "failed") {
     return toPublicWorkerFailureEvent(data);
+  }
+  if (eventName === "cancelled") {
+    return toPublicWorkerCancellationEvent(data);
   }
   return undefined;
 }

@@ -138,8 +138,8 @@ export const GetScanResponse = zod.object({
 
 
 /**
- * Stops an active isolated scan and returns a partial report when available.
- * @summary Cancel an active scan
+ * Stops worker work for one scan. Completed reports remain unchanged.
+ * @summary Cancel one queued or running scan
  */
 export const CancelScanParams = zod.object({
   "scanId": zod.uuid()
@@ -147,8 +147,8 @@ export const CancelScanParams = zod.object({
 
 export const CancelScanResponse = zod.object({
   "scanId": zod.uuid(),
-  "status": zod.enum(['queued', 'running', 'cancelling', 'cancelled', 'completed', 'failed']),
-  "cancelled": zod.boolean()
+  "cancelled": zod.boolean(),
+  "status": zod.enum(['queued', 'running', 'completed', 'failed', 'cancelled'])
 })
 
 
@@ -241,9 +241,10 @@ export const GetScanReportResponse = zod.object({
 
 
 /**
- * Requires separate per-scan consent and a short-lived, browser-bound
- * evidence token. Sends only a bounded, redacted evidence summary to
- * Vultr Serverless Inference. The explanation cannot alter the report.
+ * Requires explicit session consent and a short-lived, browser-bound
+ * evidence token. Sends a bounded, redacted evidence summary and an
+ * optional sanitized user note to Vultr Serverless Inference. The model
+ * has no tools and cannot alter the deterministic report.
  * @summary Stream an optional explanation of a completed report
  */
 export const StreamScanExplanationParams = zod.object({
@@ -252,11 +253,14 @@ export const StreamScanExplanationParams = zod.object({
 
 export const streamScanExplanationBodyExplanationTokenMax = 12000;
 
+export const streamScanExplanationBodyUserMessageMax = 1200;
+
 
 
 export const StreamScanExplanationBody = zod.object({
   "consent": zod.literal(true),
-  "explanationToken": zod.string().min(1).max(streamScanExplanationBodyExplanationTokenMax)
+  "explanationToken": zod.string().min(1).max(streamScanExplanationBodyExplanationTokenMax),
+  "userMessage": zod.string().max(streamScanExplanationBodyUserMessageMax).optional().describe('Optional user context. Common URLs, hosts, contact details, and credential patterns are redacted before inference.')
 })
 
 export const StreamScanExplanationResponse = zod.unknown()
@@ -284,7 +288,7 @@ export const CreateSelectedEmailLinkScanResponse = zod.object({
 
 /**
  * Server-Sent Events. Events are `progress` (ScanProgress), `completed` (ScanReport),
- * or `failed` (ApiError). A completed report is delivered to the connected client only
+ * `failed` (ApiError), or `cancelled` (ScanCancellationNotice). A completed report is delivered to the connected client only
  * and is not retained server-side. EventSource is used by the client for this stream.
  * @summary Stream transient scan progress and final report
  */

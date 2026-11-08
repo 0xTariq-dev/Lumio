@@ -19,15 +19,8 @@ const WorkerAcceptedSchema = z.object({
 
 const WorkerCancellationSchema = z.object({
   scanId: z.uuid(),
-  status: z.enum([
-    "queued",
-    "running",
-    "cancelling",
-    "cancelled",
-    "completed",
-    "failed",
-  ]),
   cancelled: z.boolean(),
+  status: z.enum(["queued", "running", "completed", "failed", "cancelled"]),
 });
 
 const WorkerReportSchema = z.object({
@@ -282,7 +275,6 @@ export async function cancelWorkerScan(
 > {
   const config = loadWorkerConfig();
   if (!config) return { kind: "unavailable" };
-
   try {
     const response = await fetch(
       endpointUrl(config.baseUrl, `/v1/scans/${encodeURIComponent(scanId)}/cancel`),

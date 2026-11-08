@@ -1,0 +1,44 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "ue8L52ygHh3xsXwC5vAZD"
+uri = "file://.impeccable/mocks/decision/registered-post.html"
+type = "html"
+title = "Example: Registered-post checkpoints"
+description = "A self-contained visual sketch. Progress is a stamped route through one chat; report findings arrive as readable evidence slips."
+logical_id = "c4bcaef9-bda3-4b5f-89ab-cefd15e746f1"
+content_hash = "sha256:23af9086fef1dbc23527cc9f853ef07da7e8be584fc660a30e1cf2057eeaa94d"
+size = 4688
+mtime_ms = 1794157466410
+storage_uri = "gcs://replit-rams-assets-worf/rams/assets/repl:166c2269-584d-41ec-ac4a-60c4b782a4b4/c4bcaef9-bda3-4b5f-89ab-cefd15e746f1/a94b0741-b81a-4c65-9782-76c27ea38c7f"
+storage_version_token = "1794157943461918"
+content_type = "text/html"
+
+[[outputs]]
+id = "HxuQWphORXhmrXdLH_mmy"
+uri = "file://.impeccable/mocks/decision/support-conversation.html"
+type = "html"
+title = "Example: Support conversation"
+description = "A self-contained visual sketch. A familiar chat guides the user through consent, URL or email intake, scan progress, and findings."
+logical_id = "33263258-9632-44d6-8a3a-5fbba403bfef"
+content_hash = "sha256:e06d768381297af63944211d62000f78e8e98ad2f2746eb294f04b71fe498ae7"
+size = 4339
+mtime_ms = 1794157475918
+storage_uri = "gcs://replit-rams-assets-worf/rams/assets/repl:166c2269-584d-41ec-ac4a-60c4b782a4b4/33263258-9632-44d6-8a3a-5fbba403bfef/e45ae2b5-b8b3-43f3-8fb3-8f02ddcf92d6"
+storage_version_token = "1794157945314364"
+content_type = "text/html"
+
+[[outputs]]
+id = "I58CEH3OU_C0I7KMH1yxb"
+uri = "file://.impeccable/mocks/decision/grid-evidence.html"
+type = "html"
+title = "Example: Grid-aligned evidence"
+description = "A self-contained visual sketch. A restrained alignment grid connects scan steps with the evidence returned."
+logical_id = "57eb42b2-ab1b-41e0-b3a0-a07e78858062"
+content_hash = "sha256:2739729d7e6688a4185d8948c4f89fe944491df517c5f132f72746e4bb59963d"
+size = 3967
+mtime_ms = 1794157485202
+storage_uri = "gcs://replit-rams-assets-worf/rams/assets/repl:166c2269-584d-41ec-ac4a-60c4b782a4b4/57eb42b2-ab1b-41e0-b3a0-a07e78858062/914745cd-3c4d-4a79-a147-9b14b85ebae4"
+storage_version_token = "1794157945991697"
+content_type = "text/html"

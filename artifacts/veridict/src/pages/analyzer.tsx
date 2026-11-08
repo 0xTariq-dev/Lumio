@@ -1,35 +1,34 @@
-import { lazy, Suspense, type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useGetAnalysisStatus,
   getGetAnalysisStatusQueryKey,
   useCreateUrlScan,
   useCreateEmailScan,
   useGetScan,
+  getScan,
+  getScanReport,
   getGetScanQueryKey,
   useCreateSelectedEmailLinkScan,
   useCancelScan,
-  useGetScanReport,
   getGetScanReportQueryKey,
   useCreateAgentProposal,
   useResolveAgentApproval,
   useCancelAgentApprovals,
 } from '@workspace/api-client-react';
-import type { AgentApprovalRequest, ScanAccepted, ScanProgress, ScanReport } from '@workspace/api-client-react';
+import type { AgentApprovalRequest, ScanAccepted, ScanCancellation, ScanProgress, ScanReport } from '@workspace/api-client-react';
 import {
   AlertCircle,
   ArrowUpRight,
   CheckCircle2,
   CircleAlert,
-  Clock3,
   Download,
-  FileText,
   Globe2,
   LoaderCircle,
   LockKeyhole,
   Printer,
   ShieldCheck,
   Sparkles,
-  Upload,
+  X,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -38,9 +37,13 @@ import {
   evidenceSourceLabel,
   matchKevContext,
 } from '@/lib/kev-context';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { toast } from 'sonner';
+import { CInputGroup18, type LumioAttachment } from '@/components/examples/c-input-group-18';
 
-type InputMode = 'url' | 'email';
-type StreamFailure = { message?: string };
+type ConversationItem = { scanId: string; type: ScanReport['type']; input: string; displayLabel?: string; note: string; report: ScanReport | null; summary?: string; summaryStatus?: 'idle' | 'streaming' | 'complete' | 'error'; summaryError?: string; error?: string };
+type StopNotice = { kind: 'withdrawal' | 'single' | 'batch'; scanIds: string[]; approvalIds: string[]; message: string; pendingAcceptanceCount?: number };
+type StopOutcome = { kind: 'cancelled' | 'terminal' | 'active' | 'error'; response?: ScanCancellation };
 type AgentApprovalEventData = {
   requestId: string;
   scanId: string;
@@ -177,6 +180,19 @@ function formatDate(value: string) {
     : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date);
 }
 
+function displayAttachment(type: ScanReport['type'], input: string) {
+  if (type !== 'url') return input;
+  const trimmed = input.trim();
+  try {
+    const parsed = new URL(/^[a-z]+:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+    parsed.username = '';
+    parsed.password = '';
+    return `${parsed.host}${parsed.pathname === '/' ? '' : parsed.pathname}`;
+  } catch {
+    return trimmed.split(/[?#]/, 1)[0];
+  }
+}
+
 function safeErrorMessage(error: unknown) {
   if (error && typeof error === 'object' && 'data' in error) {
     const data = (error as { data?: unknown }).data;
@@ -267,7 +283,7 @@ function reportHtml(report: ScanReport, explanationText = '') {
   const links = (report.links ?? []).map((link) =>
     `<li>${escapeHtml(link.anchorText || link.targetHost)} — ${escapeHtml(link.displayUrl)} <span class="muted">(${link.scanAvailable ? 'scan available' : 'not available'})</span></li>`).join('');
   const explanation = explanationText
-    ? `<section class="explanation"><h2>Optional AI explanation</h2><p>${escapeHtml(explanationText)}</p><p class="muted">Model-generated explanation only. It does not change the deterministic risk band. Only a redacted evidence summary was sent to Vultr; prompt-retention and model-training terms are unverified.</p></section>`
+    ? `<section class="explanation"><h2>Optional AI summary</h2><p>${escapeHtml(explanationText)}</p><p class="muted">AI-generated explanation only. It does not change the deterministic report or establish safety.</p></section>`
     : '';
   const partialBanner = report.partial
     ? `<section class="partial"><strong>Partial report</strong><p>${escapeHtml(report.partialReason ?? 'The scan was cancelled before all checks were complete. No findings do not establish safety.')}</p></section>`
@@ -424,12 +440,9 @@ export default function AnalyzerPage() {
   const createAgentProposal = useCreateAgentProposal();
   const resolveAgentApprovalMutation = useResolveAgentApproval();
   const cancelAgentApprovals = useCancelAgentApprovals();
-  const [mode, setMode] = useState<InputMode>('url');
-  const [url, setUrl] = useState('');
-  const [urlConsent, setUrlConsent] = useState(false);
-  const [emailConsent, setEmailConsent] = useState(false);
-  const [linkConsent, setLinkConsent] = useState(false);
-  const [file, setFile] = useState<File | null>(null);
+  const cancelScan = useCancelScan();
+  const [attachment, setAttachment] = useState<LumioAttachment | null>(null);
+  const [chatNote, setChatNote] = useState('');
   const [formError, setFormError] = useState('');
   const [scanAccepted, setScanAccepted] = useState<ScanAccepted | null>(null);
   const [progress, setProgress] = useState<ScanProgress | null>(null);
@@ -438,15 +451,38 @@ export default function AnalyzerPage() {
   const [scanType, setScanType] = useState<ScanReport['type']>('url');
   const [streamError, setStreamError] = useState('');
   const [streamFinished, setStreamFinished] = useState(false);
-  const [selectedLinkId, setSelectedLinkId] = useState('');
-  const [explanationConsent, setExplanationConsent] = useState(false);
-  const [explanationText, setExplanationText] = useState('');
-  const [explanationError, setExplanationError] = useState('');
-  const [explanationStatus, setExplanationStatus] = useState<'idle' | 'streaming' | 'complete' | 'error'>('idle');
   const [approvalRequest, setApprovalRequest] = useState<AgentApprovalRequest | null>(null);
   const [approvalError, setApprovalError] = useState('');
-  const [cancelRequestedScanId, setCancelRequestedScanId] = useState<string | null>(null);
-  const explanationAbortRef = useRef<AbortController | null>(null);
+  const [sessionConsent, setSessionConsent] = useState(() => {
+    try { return sessionStorage.getItem('lumio-session-consent') === 'yes'; } catch { return false; }
+  });
+  const [summaryConsent, setSummaryConsent] = useState(() => {
+    try { return sessionStorage.getItem('lumio-summary-consent') === 'yes'; } catch { return false; }
+  });
+  const [consentDialogOpen, setConsentDialogOpen] = useState(false);
+  const [batchDialogOpen, setBatchDialogOpen] = useState(false);
+  const [selectedLinkIds, setSelectedLinkIds] = useState<string[]>([]);
+  const [batchStates, setBatchStates] = useState<Record<string, { status: string; reason?: string; scanId?: string }>>({});
+  const [batchLabels, setBatchLabels] = useState<Record<string, string>>({});
+  const [batchProgress, setBatchProgress] = useState<ScanProgress | null>(null);
+  const [batchPlanVisible, setBatchPlanVisible] = useState(false);
+  const [activeBatchScans, setActiveBatchScans] = useState<string[]>([]);
+  const [conversationHistory, setConversationHistory] = useState<ConversationItem[]>([]);
+  const [cancelled, setCancelled] = useState(false);
+  const [stopNotice, setStopNotice] = useState<StopNotice | null>(null);
+  const generationRef = useRef(0);
+  const recoveringScanIdsRef = useRef<Set<string>>(new Set());
+  const activeScanIdsRef = useRef<Set<string>>(new Set());
+  const terminalScanStatusRef = useRef<Map<string, ScanCancellation['status']>>(new Map());
+  const unsafeBatchEventScanIdsRef = useRef<Set<string>>(new Set());
+  const submissionRef = useRef<{ attachment: LumioAttachment; message: string } | null>(null);
+  const batchCancelledRef = useRef(false);
+  const pendingAcceptanceChecksRef = useRef(0);
+  const summaryAbortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const summaryStartedScanIdsRef = useRef<Set<string>>(new Set());
+  const conversationNotesRef = useRef<Map<string, string>>(new Map());
+  const summaryConsentRef = useRef(summaryConsent);
+  summaryConsentRef.current = summaryConsent;
   const scanQuery = useGetScan(scanAccepted?.scanId ?? '', {
     query: {
       queryKey: getGetScanQueryKey(scanAccepted?.scanId ?? ''),
@@ -457,18 +493,584 @@ export default function AnalyzerPage() {
       },
     },
   });
-  const scanReportQuery = useGetScanReport(scanAccepted?.scanId ?? '', {
-    query: {
-      queryKey: getGetScanReportQueryKey(scanAccepted?.scanId ?? ''),
-      enabled: scanQuery.data?.status === 'cancelled' && !report,
-    },
-  });
   const status = statusQuery.data;
   const workerUnavailable = status?.workerStatus === 'unavailable' || status?.scannerAvailable === false;
   const busy = createUrl.isPending || createEmail.isPending || createSelectedLink.isPending ||
-    (!!scanAccepted && !streamFinished && !report);
+    (!!scanAccepted && !streamFinished && !report) || activeBatchScans.length > 0;
   const emailLinks = useMemo(() => (emailReport?.links ?? []).slice(0, 50), [emailReport]);
   const activeReport = report;
+
+  function acceptSessionConsent() {
+    try {
+      sessionStorage.setItem('lumio-session-consent', 'yes');
+    } catch {
+      toast.error('Consent is active for this tab, but could not be remembered for the rest of the session.');
+    }
+    try {
+      sessionStorage.setItem('lumio-summary-consent', summaryConsent ? 'yes' : 'no');
+    } catch {
+      toast.error('The optional summary choice is active for this tab, but could not be remembered for the rest of the session.');
+    }
+    setSessionConsent(true);
+    setConsentDialogOpen(false);
+    const pending = submissionRef.current;
+    submissionRef.current = null;
+    if (pending) submitInput(pending.attachment, pending.message);
+  }
+
+  function submitInput(selectedAttachment: LumioAttachment, message: string) {
+    const token = generationRef.current;
+    setFormError('');
+    setCancelled(false);
+    if (selectedAttachment.type === 'url') {
+      const rawTarget = selectedAttachment.value;
+      if (/[\r\n]/.test(rawTarget)) { setFormError('Attach one URL or public domain on a single line.'); return; }
+      const target = rawTarget.trim();
+      if (!target) { setFormError('Enter a domain, public IP, or HTTP(S) URL.'); return; }
+      if (target.length > 2048) { setFormError('Use a domain, public IP, or HTTP(S) URL under 2,048 characters.'); return; }
+      createUrl.mutate({ data: { url: target, consent: true } }, {
+        onSuccess: (accepted) => {
+          if (token !== generationRef.current) {
+            void cancelLateAcceptedScan(accepted.scanId);
+            return;
+          }
+          activeScanIdsRef.current.add(accepted.scanId);
+          void statusQuery.refetch();
+          conversationNotesRef.current.set(accepted.scanId, message);
+          setConversationHistory((current) => [...current, { scanId: accepted.scanId, type: 'url', input: target, note: message, report: null, summaryStatus: 'idle' }]);
+          setAttachment(null);
+          setChatNote('');
+          beginAccepted(accepted, 'url');
+        },
+        onError: (error) => {
+          if (token === generationRef.current) setFormError(safeErrorMessage(error));
+          else settleLateAcceptanceCheck();
+        },
+      });
+    } else {
+      const selectedFile = selectedAttachment.file;
+      if (!selectedFile.name.toLowerCase().endsWith('.eml')) { setFormError('Choose an .eml file. Other file types are not accepted.'); return; }
+      if (selectedFile.size > MAX_EMAIL_BYTES) { setFormError('The selected file is larger than the 10 MB limit.'); return; }
+      createEmail.mutate({ data: { file: selectedFile, consent: true } }, {
+        onSuccess: (accepted) => {
+          if (token !== generationRef.current) {
+            void cancelLateAcceptedScan(accepted.scanId);
+            return;
+          }
+          activeScanIdsRef.current.add(accepted.scanId);
+          void statusQuery.refetch();
+          conversationNotesRef.current.set(accepted.scanId, message);
+          setConversationHistory((current) => [...current, { scanId: accepted.scanId, type: 'email', input: selectedFile.name, note: message, report: null, summaryStatus: 'idle' }]);
+          beginAccepted(accepted, 'email');
+          setAttachment(null);
+          setChatNote('');
+        },
+        onError: (error) => {
+          if (token === generationRef.current) setFormError(safeErrorMessage(error));
+          else settleLateAcceptanceCheck();
+        },
+      });
+    }
+  }
+
+  function requestSubmit(message: string, selectedAttachment: LumioAttachment | null) {
+    if (!selectedAttachment) { setFormError('Attach one public URL or one .eml file before sending.'); return; }
+    submissionRef.current = { attachment: selectedAttachment, message };
+    if (!sessionConsent) { setConsentDialogOpen(true); return; }
+    submissionRef.current = null;
+    submitInput(selectedAttachment, message);
+  }
+
+  async function requestWorkerStop(scanId: string): Promise<StopOutcome> {
+    const terminalBeforeRequest = terminalScanStatusRef.current.get(scanId);
+    if (terminalBeforeRequest) {
+      return terminalBeforeRequest === 'cancelled'
+        ? { kind: 'cancelled', response: { scanId, cancelled: true, status: 'cancelled' } }
+        : { kind: 'terminal', response: { scanId, cancelled: false, status: terminalBeforeRequest } };
+    }
+    try {
+      const response = await cancelScan.mutateAsync({ scanId });
+      if (response.cancelled || response.status === 'cancelled') return { kind: 'cancelled', response };
+      if (response.status === 'completed' || response.status === 'failed') return { kind: 'terminal', response };
+      const observedTerminal = terminalScanStatusRef.current.get(scanId);
+      if (observedTerminal) {
+        return observedTerminal === 'cancelled'
+          ? { kind: 'cancelled', response: { scanId, cancelled: true, status: 'cancelled' } }
+          : { kind: 'terminal', response: { scanId, cancelled: false, status: observedTerminal } };
+      }
+      return { kind: 'active', response };
+    } catch {
+      const observedTerminal = terminalScanStatusRef.current.get(scanId);
+      if (observedTerminal) {
+        return observedTerminal === 'cancelled'
+          ? { kind: 'cancelled', response: { scanId, cancelled: true, status: 'cancelled' } }
+          : { kind: 'terminal', response: { scanId, cancelled: false, status: observedTerminal } };
+      }
+      return { kind: 'error' };
+    }
+  }
+
+  function setUnconfirmedNotice(kind: StopNotice['kind'], scanIds: string[], approvalIds: string[] = []) {
+    const trackedScanIds = scanIds.filter((scanId) => activeScanIdsRef.current.has(scanId));
+    const pendingAcceptanceCount = pendingAcceptanceChecksRef.current;
+    if (!trackedScanIds.length && !approvalIds.length && pendingAcceptanceCount === 0) {
+      setStopNotice(null);
+      return;
+    }
+    const message = kind === 'withdrawal'
+      ? 'Consent was withdrawn and the conversation was cleared, but Lumio could not confirm every scan and approval cancellation.'
+      : kind === 'batch'
+        ? 'Lumio could not confirm that every selected scan stopped. Unconfirmed scans remain tracked.'
+        : 'Lumio could not confirm that this scan stopped. It remains tracked.';
+    setStopNotice({ kind, scanIds: [...new Set(trackedScanIds)], approvalIds: [...new Set(approvalIds)], message, pendingAcceptanceCount });
+  }
+
+  function settleLateAcceptanceCheck() {
+    pendingAcceptanceChecksRef.current = Math.max(0, pendingAcceptanceChecksRef.current - 1);
+    setStopNotice((current) => {
+      if (!current) return null;
+      const pendingAcceptanceCount = pendingAcceptanceChecksRef.current;
+      if (!current.scanIds.length && !current.approvalIds.length && pendingAcceptanceCount === 0) return null;
+      return { ...current, pendingAcceptanceCount };
+    });
+  }
+
+  async function cancelLateAcceptedScan(scanId: string) {
+    activeScanIdsRef.current.add(scanId);
+    const outcome = await requestWorkerStop(scanId);
+    if (outcome.kind === 'cancelled' || outcome.kind === 'terminal') {
+      activeScanIdsRef.current.delete(scanId);
+    } else {
+      setActiveBatchScans((current) => [...new Set([...current, scanId])]);
+    }
+    pendingAcceptanceChecksRef.current = Math.max(0, pendingAcceptanceChecksRef.current - 1);
+    setStopNotice((current) => {
+      const scanIds = new Set(current?.scanIds ?? []);
+      if (outcome.kind === 'cancelled' || outcome.kind === 'terminal') scanIds.delete(scanId);
+      else scanIds.add(scanId);
+      const approvalIds = current?.approvalIds ?? [];
+      const pendingAcceptanceCount = pendingAcceptanceChecksRef.current;
+      if (!scanIds.size && !approvalIds.length && pendingAcceptanceCount === 0) return null;
+      return {
+        kind: 'withdrawal',
+        scanIds: [...scanIds],
+        approvalIds,
+        pendingAcceptanceCount,
+        message: 'Consent was withdrawn and the conversation was cleared, but Lumio could not confirm every scan and approval cancellation.',
+      };
+    });
+  }
+
+  function removeTrackedScan(scanId: string) {
+    activeScanIdsRef.current.delete(scanId);
+    setActiveBatchScans((current) => current.filter((id) => id !== scanId));
+  }
+
+  function resolveStopNoticeScan(scanId: string) {
+    setStopNotice((current) => {
+      if (!current) return null;
+      const scanIds = current.scanIds.filter((id) => id !== scanId);
+      if (!scanIds.length && !current.approvalIds.length && !current.pendingAcceptanceCount) return null;
+      return { ...current, scanIds };
+    });
+  }
+
+  function applyConfirmedStop(scanId: string, outcome: StopOutcome) {
+    const status = outcome.response?.status;
+    if (outcome.kind === 'cancelled') {
+      unsafeBatchEventScanIdsRef.current.delete(scanId);
+      terminalScanStatusRef.current.set(scanId, 'cancelled');
+      resolveStopNoticeScan(scanId);
+      removeTrackedScan(scanId);
+      setBatchStates((current) => Object.fromEntries(Object.entries(current).map(([linkId, item]) =>
+        item.scanId === scanId ? [linkId, { ...item, status: 'cancelled', reason: undefined }] : [linkId, item],
+      )));
+      setConversationHistory((current) => current.map((entry) => entry.scanId === scanId ? { ...entry, error: 'This analysis was cancelled by request.' } : entry));
+      if (scanAccepted?.scanId === scanId) {
+        setCancelled(true);
+        setStreamFinished(true);
+        setStreamError('This analysis was cancelled. Any completed reports remain available.');
+      }
+      return;
+    }
+    if (outcome.kind === 'terminal') {
+      if (status) terminalScanStatusRef.current.set(scanId, status);
+      if (status === 'failed') unsafeBatchEventScanIdsRef.current.delete(scanId);
+      resolveStopNoticeScan(scanId);
+      activeScanIdsRef.current.delete(scanId);
+      if (status === 'failed') {
+        setActiveBatchScans((current) => current.filter((id) => id !== scanId));
+        setBatchStates((current) => Object.fromEntries(Object.entries(current).map(([linkId, item]) =>
+          item.scanId === scanId ? [linkId, { ...item, status: 'failed', reason: 'The worker reported that this scan failed.' }] : [linkId, item],
+        )));
+        setConversationHistory((current) => current.map((entry) => entry.scanId === scanId ? { ...entry, error: 'The worker reported that this scan failed.' } : entry));
+        if (scanAccepted?.scanId === scanId) {
+          setStreamError('Analysis failed. No report is available for this scan.');
+          setStreamFinished(true);
+        }
+      } else {
+        if (unsafeBatchEventScanIdsRef.current.has(scanId)) {
+          unsafeBatchEventScanIdsRef.current.delete(scanId);
+          setActiveBatchScans((current) => current.filter((id) => id !== scanId));
+          const reason = 'The worker completed, but its report event was unavailable.';
+          setBatchStates((current) => Object.fromEntries(Object.entries(current).map(([linkId, item]) =>
+            item.scanId === scanId ? [linkId, { ...item, status: 'completed', reason }] : [linkId, item],
+          )));
+          setConversationHistory((current) => current.map((entry) => entry.scanId === scanId ? { ...entry, error: reason } : entry));
+        } else {
+          setBatchStates((current) => Object.fromEntries(Object.entries(current).map(([linkId, item]) =>
+            item.scanId === scanId ? [linkId, { ...item, status: 'completed', reason: 'Worker reported completion; this scan was not marked cancelled.' }] : [linkId, item],
+          )));
+          // Keep the current SSE open so a completed report can still arrive.
+        }
+      }
+    }
+  }
+
+  async function withdrawConsent() {
+    generationRef.current += 1;
+    batchCancelledRef.current = true;
+    summaryAbortControllersRef.current.forEach((controller) => controller.abort());
+    summaryAbortControllersRef.current.clear();
+    summaryStartedScanIdsRef.current.clear();
+    conversationNotesRef.current.clear();
+    const workerIds = [...activeScanIdsRef.current];
+    const allSessionIds = [...new Set([...workerIds, ...conversationHistory.map((entry) => entry.scanId)])];
+    pendingAcceptanceChecksRef.current = Number(createUrl.isPending) + Number(createEmail.isPending) + Number(createSelectedLink.isPending);
+    try { sessionStorage.removeItem('lumio-session-consent'); } catch {
+      toast.error('Consent was withdrawn for this tab, but the session decision could not be removed from browser storage.');
+    }
+    try { sessionStorage.removeItem('lumio-summary-consent'); } catch {
+      toast.error('The optional summary consent could not be removed from browser storage.');
+    }
+    setSessionConsent(false);
+    setSummaryConsent(false);
+    summaryConsentRef.current = false;
+    setScanAccepted(null); setProgress(null); setReport(null); setEmailReport(null);
+    setStreamError(''); setStreamFinished(false); setApprovalRequest(null);
+    setSelectedLinkIds([]); setBatchStates({}); setBatchLabels({}); setBatchProgress(null); setConversationHistory([]);
+    setAttachment(null); setChatNote('');
+    setBatchPlanVisible(false); setActiveBatchScans([]);
+    allSessionIds.forEach((scanId) => queryClient.removeQueries({ queryKey: getGetScanQueryKey(scanId), exact: true }));
+    queryClient.removeQueries({ predicate: (query) => Array.isArray(query.queryKey) && String(query.queryKey[0]).startsWith('/api/scans/') });
+    setFormError(''); setCancelled(false); setBatchDialogOpen(false);
+    submissionRef.current = null;
+    setStopNotice({ kind: 'withdrawal', scanIds: workerIds, approvalIds: allSessionIds, message: 'Consent withdrawn and conversation cleared. Waiting for the worker and approval services to confirm cancellation.', pendingAcceptanceCount: pendingAcceptanceChecksRef.current });
+    const [scanResults, approvalResults] = await Promise.all([
+      Promise.all(workerIds.map(async (scanId) => ({ scanId, outcome: await requestWorkerStop(scanId) }))),
+      Promise.all(allSessionIds.map(async (scanId) => {
+        try {
+          await cancelAgentApprovals.mutateAsync({ scanId });
+          return { scanId, confirmed: true };
+        } catch {
+          return { scanId, confirmed: false };
+        }
+      })),
+    ]);
+    const unconfirmedScans: string[] = [];
+    for (const { scanId, outcome } of scanResults) {
+      if (outcome.kind === 'cancelled' || outcome.kind === 'terminal') {
+        activeScanIdsRef.current.delete(scanId);
+      } else {
+        unconfirmedScans.push(scanId);
+      }
+    }
+    const unconfirmedApprovals = approvalResults.filter((result) => !result.confirmed).map((result) => result.scanId);
+    setStopNotice((current) => {
+      const lateScanIds = current?.scanIds.filter((scanId) => !workerIds.includes(scanId)) ?? [];
+      const lateApprovalIds = current?.approvalIds.filter((scanId) => !allSessionIds.includes(scanId)) ?? [];
+      const scanIds = [...new Set([...unconfirmedScans.filter((scanId) => activeScanIdsRef.current.has(scanId)), ...lateScanIds])];
+      const approvalIds = [...new Set([...unconfirmedApprovals, ...lateApprovalIds])];
+      const pendingAcceptanceCount = pendingAcceptanceChecksRef.current;
+      if (!scanIds.length && !approvalIds.length && pendingAcceptanceCount === 0) return null;
+      return {
+        kind: 'withdrawal',
+        scanIds,
+        approvalIds,
+        pendingAcceptanceCount,
+        message: 'Consent was withdrawn and the conversation was cleared, but Lumio could not confirm every scan and approval cancellation.',
+      };
+    });
+    setActiveBatchScans((current) => [...new Set([
+      ...unconfirmedScans.filter((scanId) => activeScanIdsRef.current.has(scanId)),
+      ...current.filter((scanId) => !workerIds.includes(scanId) && activeScanIdsRef.current.has(scanId)),
+    ])]);
+  }
+
+  async function runSelectedBatch() {
+    if (!emailReport || !selectedLinkIds.length) return;
+    batchCancelledRef.current = false;
+    const batchGeneration = generationRef.current;
+    const links = emailLinks.filter((link) => selectedLinkIds.includes(link.linkId) && link.scanAvailable);
+    const sourceNote = conversationNotesRef.current.get(emailReport.scanId) ?? '';
+    setBatchPlanVisible(true);
+    setScanType('email_link');
+    setBatchProgress({ stage: 'queued', message: 'Submitting selected links.', completedSteps: 0, totalSteps: 1, plan: [] });
+    setBatchStates(Object.fromEntries(links.map((link, index) => [link.linkId, { status: index === 0 ? 'submitting' : 'pending' }])));
+    setBatchLabels(Object.fromEntries(links.map((link) => [link.linkId, link.anchorText || link.targetHost])));
+    setBatchDialogOpen(false);
+    for (let index = 0; index < links.length; index += 1) {
+      if (batchCancelledRef.current) {
+        setBatchStates((current) => ({ ...current, ...Object.fromEntries(links.slice(index).map((link) => [link.linkId, { status: 'cancelled' }])) }));
+        break;
+      }
+      const link = links[index];
+      setBatchStates((current) => ({ ...current, [link.linkId]: { status: 'submitting' } }));
+      try {
+        const accepted = await createSelectedLink.mutateAsync({ scanId: emailReport.scanId, linkId: link.linkId, data: { consent: true } });
+        if (batchGeneration !== generationRef.current) {
+          void cancelLateAcceptedScan(accepted.scanId);
+          return;
+        }
+        activeScanIdsRef.current.add(accepted.scanId);
+        setActiveBatchScans((current) => [...new Set([...current, accepted.scanId])]);
+        conversationNotesRef.current.set(accepted.scanId, sourceNote);
+        setConversationHistory((current) => [...current, { scanId: accepted.scanId, type: 'email_link', input: link.displayUrl, displayLabel: link.anchorText || link.targetHost, note: sourceNote, report: null, summaryStatus: 'idle' }]);
+        setBatchStates((current) => ({ ...current, [link.linkId]: { status: accepted.status, scanId: accepted.scanId } }));
+        if (batchCancelledRef.current) {
+          const outcome = await requestWorkerStop(accepted.scanId);
+          if (outcome.kind === 'cancelled') {
+            applyConfirmedStop(accepted.scanId, outcome);
+            continue;
+          }
+          if (outcome.kind === 'terminal' && outcome.response?.status === 'failed') {
+            applyConfirmedStop(accepted.scanId, outcome);
+            continue;
+          }
+          if (outcome.kind === 'terminal' && outcome.response?.status === 'completed') {
+            applyConfirmedStop(accepted.scanId, outcome);
+          } else {
+            setBatchStates((current) => ({ ...current, [link.linkId]: { status: accepted.status, scanId: accepted.scanId, reason: 'Stop requested; the worker has not confirmed cancellation.' } }));
+            setUnconfirmedNotice('batch', [accepted.scanId]);
+          }
+        }
+        setBatchProgress((current) => ({
+          stage: accepted.status === 'running' ? 'starting_sandbox' : 'queued',
+          message: `Selected link accepted and ${accepted.status}.`,
+          completedSteps: current?.completedSteps ?? 0,
+          totalSteps: current?.totalSteps ?? 1,
+          plan: current?.plan ?? [],
+        }));
+        try {
+          const eventUrl = new URL(accepted.eventsPath, window.location.origin);
+          if (eventUrl.origin === window.location.origin) {
+            const stream = new EventSource(eventUrl.toString());
+            let terminal = false;
+            const finishBatchScan = () => {
+              if (terminal) return;
+              terminal = true;
+              activeScanIdsRef.current.delete(accepted.scanId);
+              setActiveBatchScans((current) => current.filter((id) => id !== accepted.scanId));
+            };
+            const setStatus = (status: string) => {
+              if (batchGeneration !== generationRef.current) { stream.close(); return; }
+              setBatchStates((current) => ({ ...current, [link.linkId]: { ...current[link.linkId], status, scanId: accepted.scanId } }));
+              if (status === 'failed' || status === 'cancelled') {
+                setConversationHistory((current) => current.map((entry) => entry.scanId === accepted.scanId ? { ...entry, error: status === 'failed' ? 'This link scan did not complete.' : 'This link scan was cancelled.' } : entry));
+              }
+              if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+                terminalScanStatusRef.current.set(accepted.scanId, status);
+                resolveStopNoticeScan(accepted.scanId);
+                finishBatchScan();
+              }
+            };
+            stream.addEventListener('progress', (event) => {
+              if (batchGeneration !== generationRef.current) { stream.close(); return; }
+              try {
+                const nextProgress = JSON.parse((event as MessageEvent).data) as ScanProgress;
+                setBatchProgress(nextProgress);
+              } catch {
+                setBatchProgress((current) => current ? { ...current, message: 'Live progress could not be read; waiting for the worker result.' } : current);
+              }
+              setStatus('running');
+            });
+            const applyBatchReport = (result: ScanReport) => {
+              const title = link.anchorText || link.targetHost;
+              setConversationHistory((current) => current.map((entry) => entry.scanId === result.scanId ? { ...entry, report: result, summaryStatus: summaryConsentRef.current ? 'streaming' : 'idle' } : entry));
+              setBatchProgress({ stage: 'completed', message: `Completed analysis for ${title}.`, completedSteps: result.executionPlan?.filter((step) => step.status === 'completed').length ?? 0, totalSteps: result.executionPlan?.length ?? 1, plan: result.executionPlan });
+              if (summaryConsentRef.current) void generateSummaryForReport(result, conversationNotesRef.current.get(result.scanId) ?? '');
+            };
+            stream.addEventListener('completed', (event) => {
+              if (batchGeneration !== generationRef.current) { stream.close(); return; }
+              let reportRead = true;
+              try {
+                applyBatchReport(JSON.parse((event as MessageEvent).data) as ScanReport);
+              } catch {
+                reportRead = false;
+                setBatchStates((current) => ({ ...current, [link.linkId]: { ...current[link.linkId], status: 'failed', reason: 'A completed result could not be read.' } }));
+              }
+              setStatus(reportRead ? 'completed' : 'failed'); stream.close();
+            });
+            stream.onerror = () => {
+              if (terminal || batchGeneration !== generationRef.current) return;
+              void (async () => {
+                let snapshot: Awaited<ReturnType<typeof getScan>> | null = null;
+                try { snapshot = await getScan(accepted.scanId); } catch { return; }
+                if (terminal || batchGeneration !== generationRef.current) return;
+                if (snapshot.status === 'completed') {
+                  const recovered = await recoverCompletedReport(accepted.scanId);
+                  if (terminal || batchGeneration !== generationRef.current) return;
+                  if (recovered) {
+                    applyBatchReport(recovered);
+                    setStatus('completed');
+                  } else {
+                    setBatchStates((current) => ({ ...current, [link.linkId]: { ...current[link.linkId], status: 'completed', reason: 'The scan completed, but its report is no longer available.' } }));
+                    setConversationHistory((current) => current.map((entry) => entry.scanId === accepted.scanId ? { ...entry, error: 'This scan completed, but its transient report is no longer available.' } : entry));
+                    setStatus('completed');
+                  }
+                  stream.close();
+                } else if (snapshot.status === 'failed' || snapshot.status === 'cancelled') {
+                  setStatus(snapshot.status);
+                  stream.close();
+                }
+              })();
+            };
+            stream.addEventListener('failed', () => { setStatus('failed'); stream.close(); });
+            stream.addEventListener('cancelled', () => { setStatus('cancelled'); stream.close(); });
+          } else {
+            throw new Error('Unsafe event stream origin');
+          }
+        } catch {
+          unsafeBatchEventScanIdsRef.current.add(accepted.scanId);
+          const outcome = await requestWorkerStop(accepted.scanId);
+          if (outcome.kind === 'cancelled') {
+            applyConfirmedStop(accepted.scanId, outcome);
+            setBatchStates((current) => ({ ...current, [link.linkId]: { status: 'cancelled', scanId: accepted.scanId, reason: 'The unsafe event stream was rejected and the worker confirmed cancellation.' } }));
+          } else if (outcome.kind === 'terminal') {
+            applyConfirmedStop(accepted.scanId, outcome);
+            const completed = outcome.response?.status === 'completed';
+            const reason = completed
+              ? 'The worker completed, but the unsafe event stream was rejected and its report could not be read.'
+              : 'The worker reported that this scan failed.';
+            setBatchStates((current) => ({ ...current, [link.linkId]: { status: completed ? 'completed' : 'failed', scanId: accepted.scanId, reason } }));
+            setConversationHistory((current) => current.map((entry) => entry.scanId === accepted.scanId ? { ...entry, error: reason } : entry));
+            setActiveBatchScans((current) => current.filter((id) => id !== accepted.scanId));
+          } else {
+            const reason = 'Live scan updates could not be opened safely. Lumio could not confirm cancellation; retry the stop request.';
+            setBatchStates((current) => ({ ...current, [link.linkId]: { status: accepted.status, scanId: accepted.scanId, reason } }));
+            setConversationHistory((current) => current.map((entry) => entry.scanId === accepted.scanId ? { ...entry, error: reason } : entry));
+            setUnconfirmedNotice('batch', [accepted.scanId]);
+          }
+        }
+        void statusQuery.refetch();
+      } catch (error) {
+        if (batchGeneration !== generationRef.current) {
+          settleLateAcceptanceCheck();
+          return;
+        }
+        if (batchCancelledRef.current) {
+          setBatchStates((current) => ({ ...current, [link.linkId]: { status: 'cancelled', reason: 'No scan was accepted before you stopped the batch.' } }));
+          continue;
+        }
+        const code = error && typeof error === 'object' && 'data' in error
+          ? String((error as { data?: { code?: string } }).data?.code ?? '') : '';
+        if (code === 'SCAN_LIMIT_REACHED' || code === 'SCAN_QUEUE_FULL') {
+          setBatchStates((current) => ({
+            ...current,
+            [link.linkId]: { status: 'skipped', reason: code === 'SCAN_LIMIT_REACHED' ? 'Daily or lifetime scan quota reached.' : 'The scan queue is full.' },
+            ...Object.fromEntries(links.slice(index + 1).map((remaining) => [remaining.linkId, {
+              status: 'skipped', reason: code === 'SCAN_LIMIT_REACHED' ? 'Skipped because the scan quota was reached.' : 'Skipped because the scan queue is full.',
+            }])),
+          }));
+          break;
+        }
+        setBatchStates((current) => ({ ...current, [link.linkId]: { status: 'failed', reason: safeErrorMessage(error) } }));
+      }
+    }
+  }
+
+  async function cancelRemainingBatch() {
+    batchCancelledRef.current = true;
+    const pending = Object.entries(batchStates).filter(([, item]) => item.status === 'submitting' || item.status === 'accepted' || item.status === 'queued' || item.status === 'running');
+    const attemptedScanIds = pending.flatMap(([, item]) => item.scanId ? [item.scanId] : []);
+    const outcomes = await Promise.all(pending.map(async ([linkId, item]) => ({
+      linkId,
+      item,
+      outcome: item.scanId ? await requestWorkerStop(item.scanId) : null,
+    })));
+    const unconfirmed: string[] = [];
+    setBatchStates((current) => Object.fromEntries(Object.entries(current).map(([linkId, item]) =>
+      item.status === 'pending' ? [linkId, { ...item, status: 'cancelled', reason: undefined }]
+        : item.status === 'submitting' && !item.scanId ? [linkId, { ...item, reason: 'Stop requested; waiting for the submission response.' }]
+          : [linkId, item],
+    )));
+    for (const { linkId, item, outcome } of outcomes) {
+      if (!item.scanId || !outcome) continue;
+      if (outcome.kind === 'cancelled') {
+        applyConfirmedStop(item.scanId, outcome);
+      } else if (outcome.kind === 'terminal') {
+        applyConfirmedStop(item.scanId, outcome);
+        if (outcome.response?.status === 'completed') {
+          setBatchStates((current) => ({ ...current, [linkId]: { ...current[linkId], status: 'completed', reason: 'The worker completed before cancellation; waiting for its report.' } }));
+        }
+      } else {
+        if (activeScanIdsRef.current.has(item.scanId)) unconfirmed.push(item.scanId);
+      }
+    }
+    setBatchProgress((current) => current ? { ...current, message: unconfirmed.length ? 'Some selected scans may still be running.' : 'Selected-link scans stopped or reached a terminal state.' } : current);
+    setStopNotice((current) => {
+      const lateScanIds = current?.scanIds.filter((scanId) => !attemptedScanIds.includes(scanId)) ?? [];
+      const scanIds = [...new Set([...unconfirmed, ...lateScanIds])];
+      const approvalIds = current?.approvalIds ?? [];
+      if (!scanIds.length && !approvalIds.length && !(current?.pendingAcceptanceCount ?? 0)) return null;
+      return {
+        kind: current?.kind ?? 'batch',
+        scanIds,
+        approvalIds,
+        pendingAcceptanceCount: current?.pendingAcceptanceCount,
+        message: current?.kind === 'withdrawal'
+          ? current.message
+          : 'Lumio could not confirm that every selected scan stopped. Unconfirmed scans remain tracked.',
+      };
+    });
+  }
+
+  async function retryStopNotice() {
+    const notice = stopNotice;
+    if (!notice) return;
+    const scanResults = await Promise.all(notice.scanIds.map(async (scanId) => ({ scanId, outcome: await requestWorkerStop(scanId) })));
+    const remainingScans: string[] = [];
+    for (const { scanId, outcome } of scanResults) {
+      if (outcome.kind === 'cancelled' || outcome.kind === 'terminal') applyConfirmedStop(scanId, outcome);
+      else remainingScans.push(scanId);
+    }
+    const approvalResults = await Promise.all(notice.approvalIds.map(async (scanId) => {
+      try {
+        await cancelAgentApprovals.mutateAsync({ scanId });
+        return { scanId, confirmed: true };
+      } catch {
+        return { scanId, confirmed: false };
+      }
+    }));
+    const remainingApprovals = approvalResults.filter((result) => !result.confirmed).map((result) => result.scanId);
+    setUnconfirmedNotice(notice.kind, remainingScans, remainingApprovals);
+    if (!remainingScans.length && !remainingApprovals.length && pendingAcceptanceChecksRef.current === 0) {
+      toast.success('Cancellation confirmed. The conversation remains cleared.');
+    }
+  }
+
+  function applyPrimaryReport(nextReport: ScanReport) {
+    setReport(nextReport);
+    setConversationHistory((current) => current.map((entry) => entry.scanId === nextReport.scanId ? { ...entry, report: nextReport, summaryStatus: summaryConsentRef.current ? 'streaming' : 'idle' } : entry));
+    if (summaryConsentRef.current) void generateSummaryForReport(nextReport, conversationNotesRef.current.get(nextReport.scanId) ?? '');
+    terminalScanStatusRef.current.set(nextReport.scanId, 'completed');
+    resolveStopNoticeScan(nextReport.scanId);
+    activeScanIdsRef.current.delete(nextReport.scanId);
+    if (nextReport.type === 'email') setEmailReport(nextReport);
+    setStreamFinished(true);
+    setStreamError('');
+    void queryClient.invalidateQueries({ queryKey: getGetScanReportQueryKey(nextReport.scanId) });
+    void queryClient.invalidateQueries({ queryKey: getGetAnalysisStatusQueryKey() });
+  }
+
+  async function recoverCompletedReport(scanId: string): Promise<ScanReport | null> {
+    try {
+      const recovered = await getScanReport(scanId);
+      return recovered.scanId === scanId ? recovered : null;
+    } catch {
+      return null;
+    }
+  }
 
   useEffect(() => {
     if (!scanAccepted || streamFinished) return;
@@ -484,7 +1086,9 @@ export default function AnalyzerPage() {
       return;
     }
     const source = new EventSource(eventsUrl.toString());
+    const streamGeneration = generationRef.current;
     source.addEventListener('progress', (event) => {
+      if (streamGeneration !== generationRef.current) return;
       try {
         setProgress(JSON.parse((event as MessageEvent).data) as ScanProgress);
       } catch {
@@ -492,22 +1096,33 @@ export default function AnalyzerPage() {
       }
     });
     source.addEventListener('completed', (event) => {
+      if (streamGeneration !== generationRef.current) { source.close(); return; }
       try {
-        const nextReport = JSON.parse((event as MessageEvent).data) as ScanReport;
-        setReport(nextReport);
-        if (nextReport.type === 'email') setEmailReport(nextReport);
-        setStreamFinished(true);
-        setStreamError('');
-        void queryClient.invalidateQueries({ queryKey: getGetScanReportQueryKey(nextReport.scanId) });
-        void queryClient.invalidateQueries({ queryKey: getGetAnalysisStatusQueryKey() });
+        applyPrimaryReport(JSON.parse((event as MessageEvent).data) as ScanReport);
       } catch {
         setStreamError('A report could not be read from the stream. The scan status is being recovered.');
       }
       source.close();
     });
     source.addEventListener('failed', (_event) => {
+      if (streamGeneration !== generationRef.current) { source.close(); return; }
       setStreamError('Analysis did not complete. No report is available for this scan.');
+      if (scanAccepted) terminalScanStatusRef.current.set(scanAccepted.scanId, 'failed');
+      if (scanAccepted) resolveStopNoticeScan(scanAccepted.scanId);
+      setConversationHistory((current) => current.map((entry) => entry.scanId === scanAccepted?.scanId ? { ...entry, error: 'Analysis did not complete. No report is available.' } : entry));
       setStreamFinished(true);
+      if (scanAccepted) activeScanIdsRef.current.delete(scanAccepted.scanId);
+      source.close();
+    });
+    source.addEventListener('cancelled', () => {
+      if (streamGeneration !== generationRef.current) { source.close(); return; }
+      setStreamError('This analysis was cancelled. No report is available for this scan.');
+      if (scanAccepted) terminalScanStatusRef.current.set(scanAccepted.scanId, 'cancelled');
+      if (scanAccepted) resolveStopNoticeScan(scanAccepted.scanId);
+      setConversationHistory((current) => current.map((entry) => entry.scanId === scanAccepted?.scanId ? { ...entry, error: 'This analysis was cancelled.' } : entry));
+      setCancelled(true);
+      setStreamFinished(true);
+      if (scanAccepted) activeScanIdsRef.current.delete(scanAccepted.scanId);
       source.close();
     });
     source.onerror = () => {
@@ -519,35 +1134,37 @@ export default function AnalyzerPage() {
   useEffect(() => {
     const snapshot = scanQuery.data;
     if (!snapshot) return;
-    if (snapshot.status === 'failed') {
+    if (snapshot.status === 'failed' || snapshot.status === 'cancelled') {
+      terminalScanStatusRef.current.set(snapshot.scanId, snapshot.status);
+      activeScanIdsRef.current.delete(snapshot.scanId);
+      setConversationHistory((current) => current.map((entry) => entry.scanId === snapshot.scanId ? { ...entry, error: snapshot.status === 'cancelled' ? 'This analysis was cancelled.' : 'Analysis did not complete.' } : entry));
       setStreamError('Analysis did not complete. No report is available for this scan.');
       setStreamFinished(true);
-    } else if (snapshot.status === 'cancelled' && !report) {
-      setStreamError('The scan was cancelled. Recovering its partial report.');
     } else if (snapshot.status === 'completed' && !report) {
-      setStreamFinished(true);
-      setStreamError('This scan completed, but its transient report is no longer available. Start a new scan to receive a fresh report.');
+      if (recoveringScanIdsRef.current.has(snapshot.scanId)) return;
+      recoveringScanIdsRef.current.add(snapshot.scanId);
+      const generation = generationRef.current;
+      void recoverCompletedReport(snapshot.scanId).then((recovered) => {
+        recoveringScanIdsRef.current.delete(snapshot.scanId);
+        if (generation !== generationRef.current) return;
+        if (recovered) {
+          applyPrimaryReport(recovered);
+          return;
+        }
+        markCompletedReportUnavailable(snapshot.scanId);
+      });
     }
   }, [scanQuery.data, report]);
 
-  useEffect(() => {
-    const recoveredReport = scanReportQuery.data;
-    if (recoveredReport && !report) {
-      setReport(recoveredReport);
-      if (recoveredReport.type === 'email') setEmailReport(recoveredReport);
+  function markCompletedReportUnavailable(scanId: string) {
+    {
+      terminalScanStatusRef.current.set(scanId, 'completed');
+      activeScanIdsRef.current.delete(scanId);
+      setConversationHistory((current) => current.map((entry) => entry.scanId === scanId ? { ...entry, error: 'This scan completed, but its transient report is no longer available.' } : entry));
       setStreamFinished(true);
-      setStreamError('');
-      return;
+      setStreamError('This scan completed, but its transient report is no longer available. Start a new scan to receive a fresh report.');
     }
-    if (
-      scanQuery.data?.status === 'cancelled' &&
-      scanReportQuery.isError &&
-      !report
-    ) {
-      setStreamFinished(true);
-      setStreamError('The scan was cancelled, but its transient report is unavailable. Start a new scan for a fresh result.');
-    }
-  }, [scanReportQuery.data, scanReportQuery.isError, scanQuery.data?.status, report]);
+  }
 
   useEffect(() => {
     if (!activeReport || !streamFinished) return;
@@ -556,7 +1173,9 @@ export default function AnalyzerPage() {
       window.location.origin,
     );
     const source = new EventSource(eventsUrl.toString());
+    const approvalGeneration = generationRef.current;
     source.addEventListener('approval_required', (event) => {
+      if (approvalGeneration !== generationRef.current) { source.close(); return; }
       try {
         const request = JSON.parse((event as MessageEvent).data) as AgentApprovalEventData;
         if (request.scanId === activeReport.scanId && request.status === 'pending') {
@@ -568,6 +1187,7 @@ export default function AnalyzerPage() {
       }
     });
     source.addEventListener('approval_resolved', (event) => {
+      if (approvalGeneration !== generationRef.current) { source.close(); return; }
       try {
         const resolved = JSON.parse((event as MessageEvent).data) as AgentApprovalEventData;
         if (resolved.requestId === approvalRequest?.requestId) {
@@ -586,145 +1206,79 @@ export default function AnalyzerPage() {
     return () => source.close();
   }, [activeReport, streamFinished, approvalRequest?.requestId]);
 
-  useEffect(() => () => explanationAbortRef.current?.abort(), []);
+  useEffect(() => () => {
+    summaryAbortControllersRef.current.forEach((controller) => controller.abort());
+    summaryAbortControllersRef.current.clear();
+  }, []);
 
-  function beginAccepted(accepted: ScanAccepted, type: ScanReport['type'], preserveEmail = false) {
-    explanationAbortRef.current?.abort();
-    explanationAbortRef.current = null;
+  function beginAccepted(accepted: ScanAccepted, type: ScanReport['type']) {
+    setBatchPlanVisible(false);
     setScanAccepted(accepted);
     setScanType(type);
     setProgress(null);
     setReport(null);
     setStreamError('');
     setStreamFinished(false);
-    setExplanationConsent(false);
-    setExplanationText('');
-    setExplanationError('');
-    setExplanationStatus('idle');
     setApprovalRequest(null);
     setApprovalError('');
-    setUrlConsent(false);
-    setEmailConsent(false);
-    setLinkConsent(false);
-    if (!preserveEmail) {
+    if (type !== 'email_link') {
       setEmailReport(null);
-      setSelectedLinkId('');
+      setSelectedLinkIds([]);
     }
   }
 
-  function cancelActiveScan() {
-    if (!scanAccepted) return;
-    setStreamError('Cancellation requested. Waiting for the partial report.');
-    cancelScanMutation.mutate(
-      { scanId: scanAccepted.scanId },
-      {
-        onSuccess: (result) => {
-          if (result.cancelled) setCancelRequestedScanId(result.scanId);
-          if (result.status === 'completed') {
-            void scanQuery.refetch();
-          }
+  async function generateSummaryForReport(nextReport: ScanReport, note: string) {
+    if (!summaryConsentRef.current || summaryStartedScanIdsRef.current.has(nextReport.scanId)) return;
+    summaryStartedScanIdsRef.current.add(nextReport.scanId);
+    const explanationToken = nextReport.explanationToken;
+    if (!explanationToken) {
+      setConversationHistory((current) => current.map((entry) => entry.scanId === nextReport.scanId
+        ? { ...entry, summaryStatus: 'error', summaryError: 'A short-lived summary token was not available. The deterministic report is unchanged.' }
+        : entry));
+      return;
+    }
+    const tokenGeneration = generationRef.current;
+    const controller = new AbortController();
+    summaryAbortControllersRef.current.set(nextReport.scanId, controller);
+    setConversationHistory((current) => current.map((entry) => entry.scanId === nextReport.scanId
+      ? { ...entry, summary: '', summaryError: undefined, summaryStatus: 'streaming' }
+      : entry));
+    try {
+      const { streamReportExplanation } = await import('@/lib/explanation-stream');
+      await streamReportExplanation(
+        nextReport.scanId,
+        explanationToken,
+        controller.signal,
+        (delta) => {
+          if (tokenGeneration !== generationRef.current) return;
+          setConversationHistory((current) => current.map((entry) => entry.scanId === nextReport.scanId
+            ? { ...entry, summary: `${entry.summary ?? ''}${delta}`.slice(0, 1400) }
+            : entry));
         },
-        onError: () => {
-          setStreamError('Cancellation could not be confirmed. The analysis may still be running.');
-        },
-      },
-    );
+        note,
+      );
+      if (tokenGeneration === generationRef.current) {
+        setConversationHistory((current) => current.map((entry) => entry.scanId === nextReport.scanId ? { ...entry, summaryStatus: 'complete' } : entry));
+      }
+    } catch (error) {
+      if (tokenGeneration !== generationRef.current) return;
+      setConversationHistory((current) => current.map((entry) => entry.scanId === nextReport.scanId
+        ? { ...entry, summaryStatus: 'error', summaryError: error instanceof Error ? error.message : 'The optional AI summary could not be completed. The report is unchanged.' }
+        : entry));
+    } finally {
+      if (summaryAbortControllersRef.current.get(nextReport.scanId) === controller) {
+        summaryAbortControllersRef.current.delete(nextReport.scanId);
+      }
+    }
   }
 
-  function handleUrlSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFormError('');
-    if (!urlConsent) {
-      setFormError('Confirm consent before submitting this URL.');
-      return;
-    }
-    const target = url.trim();
-    if (!target) {
-      setFormError('Enter a domain, public IP, or HTTP(S) URL.');
-      return;
-    }
-    if (target.length > 2048) {
-      setFormError('Use a domain, public IP, or HTTP(S) URL under 2,048 characters.');
-      return;
-    }
-    createUrl.mutate(
-      { data: { url: target, consent: true } },
-      {
-        onSuccess: (accepted) => {
-          void statusQuery.refetch();
-          beginAccepted(accepted, 'url');
-        },
-        onError: (error) => {
-          void statusQuery.refetch();
-          setFormError(safeErrorMessage(error));
-        },
-      },
-    );
-  }
-
-  function handleEmailSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setFormError('');
-    if (!file) {
-      setFormError('Choose an .eml file to continue.');
-      return;
-    }
-    if (!file.name.toLowerCase().endsWith('.eml')) {
-      setFormError('This analyzer accepts .eml files only.');
-      return;
-    }
-    if (file.size > MAX_EMAIL_BYTES) {
-      setFormError('The selected file is larger than the 10 MB limit.');
-      return;
-    }
-    if (!emailConsent) {
-      setFormError('Confirm consent before submitting this email.');
-      return;
-    }
-    createEmail.mutate(
-      { data: { file, consent: true } },
-      {
-        onSuccess: (accepted) => {
-          void statusQuery.refetch();
-          beginAccepted(accepted, 'email');
-        },
-        onError: (error) => {
-          void statusQuery.refetch();
-          setFormError(safeErrorMessage(error));
-        },
-      },
-    );
-  }
-
-  function scanSelectedLink() {
-    if (!emailReport || !selectedLinkId || !linkConsent) {
-      setFormError('Select a link and confirm separate consent before scanning it.');
-      return;
-    }
-    const link = emailLinks.find((item) => item.linkId === selectedLinkId);
-    if (!link?.scanAvailable) {
-      setFormError('This link is not available for a separate scan.');
-      return;
-    }
-    setFormError('');
-    createSelectedLink.mutate(
-      { scanId: emailReport.scanId, linkId: selectedLinkId, data: { consent: true } },
-      {
-        onSuccess: (accepted) => {
-          void statusQuery.refetch();
-          beginAccepted(accepted, 'email_link', true);
-        },
-        onError: (error) => {
-          void statusQuery.refetch();
-          setFormError(safeErrorMessage(error));
-        },
-      },
-    );
+  function reportSummary(scanId: string) {
+    return conversationHistory.find((item) => item.scanId === scanId);
   }
 
   function exportReport() {
     if (!activeReport) return;
-    const blob = new Blob([reportHtml(activeReport, explanationText)], { type: 'text/html;charset=utf-8' });
+    const blob = new Blob([reportHtml(activeReport, reportSummary(activeReport.scanId)?.summary ?? '')], { type: 'text/html;charset=utf-8' });
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = objectUrl;
@@ -743,7 +1297,7 @@ export default function AnalyzerPage() {
       if (!printWindow) return false;
       const printableWindow = printWindow;
       printableWindow.document.open();
-      printableWindow.document.write(reportHtml(activeReport, explanationText));
+      printableWindow.document.write(reportHtml(activeReport, reportSummary(activeReport.scanId)?.summary ?? ''));
       printableWindow.document.close();
       printableWindow.opener = null;
       printableWindow.requestAnimationFrame(() => {
@@ -760,52 +1314,21 @@ export default function AnalyzerPage() {
     }
   }
 
-  async function requestExplanation() {
-    if (!activeReport?.explanationToken || !explanationConsent) {
-      setExplanationError('Confirm separate consent before requesting an explanation.');
-      return;
-    }
-    explanationAbortRef.current?.abort();
-    const controller = new AbortController();
-    explanationAbortRef.current = controller;
-    setExplanationText('');
-    setExplanationError('');
-    setExplanationStatus('streaming');
-    try {
-      const { streamReportExplanation } = await import('@/lib/explanation-stream');
-      await streamReportExplanation(
-        activeReport.scanId,
-        activeReport.explanationToken,
-        controller.signal,
-        (delta) => setExplanationText((current) => `${current}${delta}`.slice(0, 1400)),
-      );
-      setExplanationStatus('complete');
-    } catch (error) {
-      if (controller.signal.aborted) {
-        setExplanationError('Explanation canceled. Your report is unchanged.');
-      } else {
-        setExplanationError(error instanceof Error
-          ? error.message
-          : 'The optional explanation could not be completed. Your report is unchanged.');
-      }
-      setExplanationStatus('error');
-    } finally {
-      if (explanationAbortRef.current === controller) explanationAbortRef.current = null;
-    }
-  }
-
-  function cancelExplanation() {
-    explanationAbortRef.current?.abort();
-  }
-
   function requestAgentProposal() {
     if (!activeReport) return;
     setApprovalError('');
+    const proposalGeneration = generationRef.current;
     createAgentProposal.mutate(
       { scanId: activeReport.scanId, data: { scanType: activeReport.type } },
       {
-        onSuccess: (request) => setApprovalRequest(request),
-        onError: () => setApprovalError('A follow-up proposal could not be prepared. Your report is unchanged.'),
+        onSuccess: (request) => {
+          if (proposalGeneration !== generationRef.current) {
+            void cancelAgentApprovals.mutateAsync({ scanId: request.scanId }).catch(() => undefined);
+            return;
+          }
+          setApprovalRequest(request);
+        },
+        onError: () => { if (proposalGeneration === generationRef.current) setApprovalError('A follow-up proposal could not be prepared. Your report is unchanged.'); },
       },
     );
   }
@@ -846,10 +1369,23 @@ export default function AnalyzerPage() {
   const progressMessage = progress?.message ??
     (scanAccepted?.status === 'queued' ? 'Waiting for an isolated worker.' : 'Connecting to the isolated worker.');
 
+  const hasConversation = conversationHistory.length > 0 || Boolean(formError || cancelled);
+  const currentPlan = batchPlanVisible ? batchProgress?.plan ?? [] : progress?.plan ?? activeReport?.executionPlan ?? [];
+  const currentProgressMessage = batchPlanVisible ? batchProgress?.message ?? 'Submitting selected links.' : progressMessage;
+  const cancelCurrentScan = async () => {
+    const scanId = scanAccepted?.scanId;
+    if (!scanId) return;
+    const outcome = await requestWorkerStop(scanId);
+    applyConfirmedStop(scanId, outcome);
+      if ((outcome.kind === 'active' || outcome.kind === 'error') && activeScanIdsRef.current.has(scanId)) {
+      setUnconfirmedNotice('single', [scanId]);
+    }
+  };
+
   return (
     <div className="min-h-[100dvh] bg-background text-foreground">
       <header className="border-b border-border bg-card">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
           <a href="/" data-testid="link-lumio-home" className="flex min-h-11 items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Lumio home">
             <span className="flex size-9 shrink-0 items-center justify-center" aria-hidden="true">
               <img src="/lumio-mark-96.gif" alt="" className="size-full object-contain motion-reduce:hidden" />
@@ -864,212 +1400,173 @@ export default function AnalyzerPage() {
           </div>
         </div>
       </header>
-
-      <main className="mx-auto max-w-6xl px-4 pb-16 pt-8 sm:px-6 sm:pt-12">
-        <section className="mb-8 max-w-3xl">
-          <h1 className="max-w-2xl text-balance text-3xl font-semibold tracking-tight sm:text-4xl">Bringing threats to light. Investigate first, click later.</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
-            Private, consent-based checks of suspicious URLs and email run in an isolated worker. Lumio reports observable evidence and coverage limits—not a promise of safety.
-          </p>
+      <main className="mx-auto max-w-5xl px-4 pb-10 pt-8 sm:px-6 sm:pt-11">
+        <section className="mb-7 max-w-3xl">
+          <h1 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">Bringing threats to light. Investigate first, click later.</h1>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground sm:text-base">Private, consent-based checks run in an isolated worker. Lumio reports observable evidence and coverage limits—not a promise of safety.</p>
         </section>
-
-        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,0.92fr)_minmax(420px,1.08fr)]">
-          <section className="overflow-hidden rounded-xl border border-border bg-card shadow-sm" aria-labelledby="analyzer-title">
-            <div className="border-b border-border px-5 py-5 sm:px-6">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <h2 id="analyzer-title" className="text-balance text-xl font-semibold tracking-tight">What would you like to check?</h2>
-                </div>
-                <span className="hidden rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground sm:inline-flex">No account required</span>
+        {stopNotice && <aside role="alert" aria-live="assertive" className="mb-5 flex flex-col gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 sm:flex-row sm:items-center sm:justify-between" data-testid="status-stop-unconfirmed">
+          <div><p className="text-sm font-semibold">{stopNotice.message}</p>{(stopNotice.pendingAcceptanceCount ?? 0) > 0 && <p className="mt-1 text-xs leading-5 text-muted-foreground">Waiting for {stopNotice.pendingAcceptanceCount} in-flight submission{stopNotice.pendingAcceptanceCount === 1 ? '' : 's'} to return an acceptance before a stop request can be sent.</p>}</div>
+          {(stopNotice.scanIds.length > 0 || stopNotice.approvalIds.length > 0) && <button type="button" onClick={() => void retryStopNotice()} disabled={cancelScan.isPending || cancelAgentApprovals.isPending} className="min-h-11 shrink-0 rounded-md border border-destructive/30 bg-background px-4 text-sm font-medium hover:bg-destructive/5 disabled:opacity-50" data-testid="button-retry-stop">Retry stop request</button>}
+        </aside>}
+        <section className="mx-auto max-w-4xl overflow-hidden rounded-2xl border border-border bg-card shadow-sm" aria-label="Investigation conversation">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3.5 sm:px-6">
+            <div><h2 className="text-base font-semibold tracking-tight">Investigation workspace</h2><p className="mt-0.5 text-xs text-muted-foreground">One temporary conversation. Nothing here is saved after this tab closes.</p></div>
+            {sessionConsent && <button type="button" onClick={withdrawConsent} data-testid="button-withdraw-consent" className="min-h-10 rounded-md px-3 text-xs font-medium text-muted-foreground underline-offset-4 hover:bg-muted hover:text-foreground hover:underline">Withdraw consent and clear</button>}
+          </div>
+          {(scanAccepted || batchPlanVisible) && (
+            <div className="sticky top-0 z-10 border-b border-border bg-card/95 px-4 py-4 backdrop-blur-sm sm:px-6" data-testid="pinned-scan-stepper">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div><p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Analysis plan</p><p className="mt-1 text-sm font-medium">{batchPlanVisible ? currentProgressMessage : activeReport ? 'Analysis complete' : cancelled ? 'Analysis cancelled' : progressMessage}</p></div>
+                {batchPlanVisible && activeBatchScans.length > 0
+                  ? <button type="button" onClick={() => void cancelRemainingBatch()} disabled={cancelScan.isPending} data-testid="button-cancel-link-batch" className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-md border border-input px-3 text-sm font-medium hover:bg-muted disabled:opacity-50"><X className="size-4" aria-hidden="true" /> Stop selected links</button>
+                  : scanAccepted && !streamFinished && <button type="button" onClick={() => void cancelCurrentScan()} disabled={cancelScan.isPending} data-testid="button-cancel-scan" className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-md border border-input px-3 text-sm font-medium hover:bg-muted disabled:opacity-50"><X className="size-4" aria-hidden="true" /> Stop analysis</button>}
               </div>
-              <div className="mt-5 grid grid-cols-2 rounded-lg bg-muted p-1" role="group" aria-label="Analysis type">
-                <button type="button" aria-pressed={mode === 'url'} onClick={() => { setMode('url'); setFormError(''); }}
-                  data-testid="tab-analyze-url" className={`min-h-11 rounded-md px-3 text-sm font-medium transition-colors ${mode === 'url' ? 'bg-card text-foreground shadow-sm' : 'text-foreground/80 hover:text-foreground'}`}>
-                  <Globe2 className="mr-2 inline size-4" aria-hidden="true" /> URL
-                </button>
-                <button type="button" aria-pressed={mode === 'email'} onClick={() => { setMode('email'); setFormError(''); }}
-                  data-testid="tab-analyze-email" className={`min-h-11 rounded-md px-3 text-sm font-medium transition-colors ${mode === 'email' ? 'bg-card text-foreground shadow-sm' : 'text-foreground/80 hover:text-foreground'}`}>
-                  <FileText className="mr-2 inline size-4" aria-hidden="true" /> Email file
-                </button>
-              </div>
+              <Suspense fallback={<ScanProgressLoadingSkeleton />}>
+                <ScanProgressStepper steps={currentPlan.map((step) => ({ id: String(step.id), label: planStepLabel(step.id, batchPlanVisible ? 'email_link' : scanType), status: String(step.status), details: step.reasonCode ? planReasonLabel(step.reasonCode, batchPlanVisible ? 'email_link' : scanType) : undefined }))} testId="live-execution-plan" />
+              </Suspense>
+              {streamError && <p className="mt-2 text-xs text-muted-foreground" role="status" data-testid="status-stream-recovery">{streamError}</p>}
             </div>
-
-            <div className="p-5 sm:p-6">
-              {mode === 'url' ? (
-                <form onSubmit={handleUrlSubmit} noValidate>
-                  <label htmlFor="url-input" className="mb-2 block text-sm font-medium">Suspicious domain, IP, or URL</label>
-                  <div className="flex min-h-12 items-center gap-2 rounded-lg border border-input bg-background px-3 focus-within:ring-2 focus-within:ring-ring/30">
-                    <Globe2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                    <input id="url-input" type="text" inputMode="url" autoComplete="url" value={url} maxLength={2048}
-                      onChange={(event) => setUrl(event.target.value)} placeholder="example.com or https://example.com/path"
-                      aria-describedby="url-help" data-testid="input-suspicious-url"
-                      className="min-w-0 flex-1 bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground" />
-                  </div>
-                  <p id="url-help" className="mt-2 text-pretty text-xs text-muted-foreground">Bare domains and IPs use HTTPS. Include http:// to request HTTP. Public targets only; maximum 2,048 characters.</p>
-                  <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-muted/30 p-3.5 text-sm leading-5">
-                    <input type="checkbox" checked={urlConsent} onChange={(event) => setUrlConsent(event.target.checked)}
-                      data-testid="checkbox-url-consent" className="mt-0.5 size-4 shrink-0 accent-foreground" />
-                    <span>I have permission to submit this URL for a transient, isolated analysis. I understand the site may be visited by an automated browser.</span>
-                  </label>
-                  <button type="submit" disabled={busy || workerUnavailable || statusQuery.isLoading || statusQuery.isError}
-                    data-testid="button-submit-url"
-                    className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
-                    {createUrl.isPending ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : <ShieldCheck className="size-4" aria-hidden="true" />}
-                    Analyze URL
-                  </button>
-                </form>
-              ) : (
-                <form onSubmit={handleEmailSubmit} noValidate>
-                  <label htmlFor="email-file" className="mb-2 block text-sm font-medium">Email message (.eml)</label>
-                  <label htmlFor="email-file" className="flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-input bg-muted/20 px-4 py-5 text-center transition-colors hover:bg-muted/40 focus-within:ring-2 focus-within:ring-ring/40">
-                    <span className="mb-2 flex size-10 items-center justify-center rounded-full border border-border bg-card"><Upload className="size-4 text-muted-foreground" aria-hidden="true" /></span>
-                    <span className="text-sm font-medium">{file ? file.name : 'Choose an .eml file'}</span>
-                    <span className="mt-1 text-xs text-muted-foreground">{file ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : 'Maximum file size 10 MB'}</span>
-                    <input id="email-file" type="file" accept=".eml,message/rfc822" className="sr-only"
-                      onChange={(event) => { setFile(event.target.files?.[0] ?? null); setFormError(''); }}
-                      data-testid="input-email-file" aria-describedby="email-help" />
-                  </label>
-                  <p id="email-help" className="mt-2 text-xs leading-5 text-muted-foreground">Message content is processed transiently. The raw email body is never shown. Attachments are limited to metadata; contents are not opened.</p>
-                  <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-muted/30 p-3.5 text-sm leading-5">
-                    <input type="checkbox" checked={emailConsent} onChange={(event) => setEmailConsent(event.target.checked)}
-                      data-testid="checkbox-email-consent" className="mt-0.5 size-4 shrink-0 accent-foreground" />
-                    <span>I have permission to submit this email for transient analysis and understand that extracted links are not visited unless I separately choose and consent to scan one.</span>
-                  </label>
-                  <button type="submit" disabled={busy || workerUnavailable || statusQuery.isLoading || statusQuery.isError}
-                    data-testid="button-submit-email"
-                    className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
-                    {createEmail.isPending ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : <ShieldCheck className="size-4" aria-hidden="true" />}
-                    Analyze email
-                  </button>
-                </form>
-              )}
-
-              {formError && <div role="alert" data-testid="error-analysis-form" className="mt-4 flex gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"><AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{formError}</div>}
-
-              {workerUnavailable && (
-                <div role="status" data-testid="status-worker-unavailable" className="mt-4 flex gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
-                  <CircleAlert className="mt-0.5 size-5 shrink-0 text-destructive" aria-hidden="true" />
-                  <div><p className="text-sm font-semibold">Analysis is temporarily unavailable</p><p className="mt-1 text-sm leading-5 text-muted-foreground">The isolated analyzer is unavailable. No scan has been started, and no result can be produced right now.</p></div>
+          )}
+       <div className="flex min-h-[min(70vh,680px)] max-h-[min(75vh,760px)] flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6" aria-live="polite" aria-relevant="additions text" data-testid="conversation-thread">
+              {!hasConversation && !activeReport && (
+                <div className="mx-auto flex min-h-72 max-w-xl flex-col items-center justify-center py-12 text-center">
+                  <span className="flex size-12 items-center justify-center rounded-xl border border-border bg-muted/50"><ShieldCheck className="size-5 text-muted-foreground" aria-hidden="true" /></span>
+                  <h3 className="mt-4 text-lg font-semibold tracking-tight">Start with what looks suspicious</h3>
+                  <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">Paste a public URL or attach one .eml message. Lumio will show what it could inspect and what it could not.</p>
+                  <p className="mt-5 text-xs text-muted-foreground"><LockKeyhole className="mr-1 inline size-3.5" aria-hidden="true" /> Consent is requested before the first scan · Results stay in this tab</p>
                 </div>
               )}
-              {statusQuery.isError && <div role="alert" data-testid="error-readiness" className="mt-3 flex items-center justify-between gap-3 text-sm text-destructive"><span>Analyzer readiness could not be confirmed. Retry before submitting a scan.</span><button type="button" onClick={() => void statusQuery.refetch()} data-testid="button-retry-readiness" className="min-h-11 shrink-0 rounded-md border border-destructive/30 px-2.5 py-1.5 font-medium hover:bg-destructive/5">Retry</button></div>}
-
-              {status?.scanQuota.enabled && (
-                <section
-                  aria-label="Scan usage"
-                  data-testid="status-scan-quota"
-                  className="mt-4 rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm"
-                >
-                  <h3 className="font-semibold">Scan usage</h3>
-                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <p data-testid="text-scan-quota-daily">
-                      Today: <strong>{status.scanQuota.daily.used ?? '—'}/{status.scanQuota.daily.total}</strong> used
-                    </p>
-                    <p data-testid="text-scan-quota-lifetime">
-                      Lifetime: <strong>{status.scanQuota.lifetime.used ?? '—'}/{status.scanQuota.lifetime.total}</strong> used
-                    </p>
+              {conversationHistory.filter((item) => item.scanId !== scanAccepted?.scanId).map((item) => (
+                <article key={item.scanId} className="mb-6 border-b border-border pb-5" data-testid={`conversation-history-${item.scanId}`}>
+                  <div className="mb-4 flex justify-end">
+                    <div className="max-w-[90%] rounded-2xl rounded-br-sm bg-muted px-4 py-3 text-sm leading-6 sm:max-w-[75%]">
+                      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">You submitted · {item.type === 'email' ? 'Email message' : item.type === 'email_link' ? 'Selected email link' : 'URL'}</p>
+                      {item.displayLabel && <p className="break-all">{item.displayLabel}</p>}
+                      <p className="break-all">{displayAttachment(item.type, item.input)}</p>
+                      <p className="mt-2 whitespace-pre-wrap break-words text-muted-foreground">{item.note || 'No note added.'}</p>
+                      {item.type === 'email' && <p className="mt-2 text-xs text-muted-foreground">Raw email content is not displayed. Attachment contents are not opened.</p>}
+                    </div>
                   </div>
-                </section>
+                  {item.report ? <BatchEvidence report={item.report} title={item.type === 'email' ? `Email analysis · ${item.input}` : item.displayLabel ?? displayAttachment(item.type, item.input)} summary={item.summary ?? ''} summaryStatus={item.summaryStatus ?? 'idle'} summaryError={item.summaryError ?? ''} /> : item.error ? <p className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground" role="status">{item.error}</p> : <p className="text-sm text-muted-foreground" role="status">{activeBatchScans.includes(item.scanId) ? 'Selected link analysis is still running.' : 'This earlier scan has no report available in memory.'}</p>}
+                </article>
+              ))}
+              {scanAccepted && conversationHistory.find((item) => item.scanId === scanAccepted.scanId) && (
+                <div className="mb-5 flex justify-end" data-testid="message-user-submission">
+                  <div className="max-w-[90%] rounded-2xl rounded-br-sm bg-muted px-4 py-3 text-sm leading-6 sm:max-w-[75%]">
+                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">You submitted</p>
+                    <p className="break-all">{displayAttachment(scanType, conversationHistory.find((item) => item.scanId === scanAccepted.scanId)?.input ?? '')}</p>
+                    <p className="mt-2 whitespace-pre-wrap break-words text-muted-foreground">{conversationHistory.find((item) => item.scanId === scanAccepted.scanId)?.note || 'No note added.'}</p>
+                    {scanType === 'email' && <p className="mt-2 text-xs text-muted-foreground">Raw email content is not displayed. Attachments are metadata only.</p>}
+                  </div>
+                </div>
               )}
-
-              <div className="mt-5 grid grid-cols-2 gap-3 border-t border-border pt-4 text-xs text-muted-foreground">
-                <div className="flex items-center gap-2"><LockKeyhole className="size-3.5" aria-hidden="true" /> Consent before every scan</div>
-                <div className="flex items-center gap-2"><Clock3 className="size-3.5" aria-hidden="true" /> Results are transient</div>
-              </div>
+              {busy && !activeReport && <div className="mb-5 max-w-[90%] rounded-2xl rounded-bl-sm border border-border bg-background px-4 py-3 text-sm" role="status" data-testid="status-scan-progress"><p className="font-medium">Lumio is checking this in an isolated session</p><p className="mt-1 text-muted-foreground" data-testid="text-progress-message">{progressMessage}</p><p className="mt-2 text-xs text-muted-foreground">{progress ? `${progress.completedSteps} of ${progress.totalSteps} plan steps resolved` : 'Waiting for the scan service to publish its execution plan.'}</p></div>}
+              {activeReport && <div className="mt-2"><ReportView report={activeReport} onExport={exportReport} emailLinks={emailLinks}
+                onPrint={printReport} selectedLinkIds={selectedLinkIds} setSelectedLinkIds={setSelectedLinkIds} onOpenBatch={() => setBatchDialogOpen(true)}
+                summaryEnabled={summaryConsent} summaryText={reportSummary(activeReport.scanId)?.summary ?? ''} summaryError={reportSummary(activeReport.scanId)?.summaryError ?? ''}
+                summaryStatus={reportSummary(activeReport.scanId)?.summaryStatus ?? 'idle'}
+                approvalRequest={approvalRequest} approvalPending={createAgentProposal.isPending || resolveAgentApprovalMutation.isPending || cancelAgentApprovals.isPending}
+                approvalError={approvalError} onContinue={requestAgentProposal} onResolveApproval={resolveAgentApproval} onCancelApproval={cancelAgentApproval} />
+              </div>}
+              {streamError && !activeReport && <div className="my-4 rounded-xl border border-border bg-muted/30 p-4" role="status" data-testid="status-analysis-unavailable"><h3 className="font-semibold">No report available</h3><p className="mt-1 text-sm leading-6 text-muted-foreground">{streamError}</p></div>}
+              {formError && <div role="alert" data-testid="error-analysis-form" className="mb-3 flex gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"><AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{formError}</div>}
+              {workerUnavailable && <div role="status" className="mb-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm" data-testid="status-worker-unavailable">Analysis is temporarily unavailable. No scan has been started.</div>}
+              {statusQuery.isError && <div role="alert" className="mb-3 flex justify-between gap-3 text-sm text-destructive" data-testid="error-readiness"><span>Analyzer readiness could not be confirmed.</span><button type="button" onClick={() => void statusQuery.refetch()} data-testid="button-retry-readiness" className="min-h-10 underline">Retry</button></div>}
+              {!!Object.keys(batchStates).length && <section className="mt-5 rounded-xl border border-border bg-muted/20 p-4" aria-label="Selected link scan batch" data-testid="selected-link-batch"><div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold">Selected link scans</h3>{Object.values(batchStates).some((item) => ['submitting', 'accepted', 'queued', 'running'].includes(item.status)) && <button type="button" onClick={() => void cancelRemainingBatch()} disabled={cancelScan.isPending} className="min-h-10 rounded-md border border-input px-3 text-xs font-medium hover:bg-muted disabled:opacity-50" data-testid="button-cancel-link-batch">Stop remaining scans</button>}</div><ul className="mt-3 space-y-2">{Object.entries(batchStates).map(([id, item]) => <li key={id} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm" data-testid={`batch-link-${id}`}><span className="min-w-0 flex-1 break-all">{batchLabels[id] || 'Selected link'}<span className="ml-2 text-xs text-muted-foreground">{item.reason ?? (item.status === 'running' ? 'Worker is analyzing this link.' : '')}</span></span><span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-xs capitalize">{item.status}</span></li>)}</ul></section>}
             </div>
-          </section>
-
-          <section className="min-w-0" aria-label="Analysis report">
-            {busy && !activeReport ? (
-              <div className="rounded-xl border border-border bg-card p-5 shadow-sm sm:p-6" aria-live="polite" data-testid="status-scan-progress">
-                <div className="flex items-start justify-between gap-3">
-                  <div><p className="text-xs font-semibold uppercase tracking-[0.13em] text-muted-foreground">Live analysis</p><h2 className="mt-1 text-xl font-semibold tracking-tight">Working in an isolated session</h2></div>
-                  <LoaderCircle className="mt-1 size-5 animate-spin text-muted-foreground" aria-hidden="true" />
-                </div>
-                <div className="mt-7">
-                  <Suspense fallback={<ScanProgressLoadingSkeleton />}>
-                    <ScanProgressStepper
-                      steps={(progress?.plan ?? []).map((step) => ({
-                        id: String(step.id),
-                        label: planStepLabel(step.id, scanType),
-                        status: String(step.status),
-                        details: step.reasonCode
-                          ? planReasonLabel(step.reasonCode, scanType)
-                          : undefined,
-                      }))}
-                      testId="live-execution-plan"
-                    />
-                  </Suspense>
-                </div>
-                <div className="mt-5 rounded-lg border border-border bg-muted/30 px-4 py-3">
-                  <p className="text-sm font-medium" data-testid="text-progress-message">{progressMessage}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">{progress ? `${progress.completedSteps} of ${progress.totalSteps} plan steps resolved` : 'Waiting for the scan service to publish its execution plan.'}</p>
-                  {streamError && <p className="mt-2 text-xs text-muted-foreground" data-testid="status-stream-recovery">{streamError}</p>}
-                </div>
-                <div className="mt-4 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={cancelActiveScan}
-                    disabled={cancelScanMutation.isPending || cancelRequestedScanId === scanAccepted?.scanId}
-                    aria-label="Cancel the current scan"
-                    data-testid="button-cancel-scan"
-                    className="inline-flex min-h-11 items-center justify-center rounded-lg border border-border px-4 text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {cancelScanMutation.isPending || cancelRequestedScanId === scanAccepted?.scanId
-                      ? 'Cancelling scan…'
-                      : 'Cancel scan'}
-                  </button>
-                </div>
-                {scanQuery.isError && <p className="mt-3 text-sm text-muted-foreground">Unable to recover the latest status. Waiting for the live scan stream.</p>}
-              </div>
-            ) : activeReport ? (
-              <ReportView report={activeReport} onExport={exportReport} emailLinks={emailLinks}
-                onPrint={printReport}
-                selectedLinkId={selectedLinkId} setSelectedLinkId={(id) => { setSelectedLinkId(id); setLinkConsent(false); setFormError(''); }}
-                linkConsent={linkConsent} setLinkConsent={setLinkConsent} onScanLink={scanSelectedLink}
-                selectedLinkPending={createSelectedLink.isPending}
-                explanationConsent={explanationConsent} setExplanationConsent={setExplanationConsent}
-                explanationText={explanationText} explanationError={explanationError}
-                explanationStatus={explanationStatus} onExplain={requestExplanation}
-                onCancelExplanation={cancelExplanation}
-                approvalRequest={approvalRequest}
-                approvalPending={createAgentProposal.isPending || resolveAgentApprovalMutation.isPending || cancelAgentApprovals.isPending}
-                approvalError={approvalError}
-                onContinue={requestAgentProposal}
-                onResolveApproval={resolveAgentApproval}
-                onCancelApproval={cancelAgentApproval} />
-            ) : streamError ? (
-              <div className="rounded-xl border border-border bg-card p-6 shadow-sm" role="status" data-testid="status-analysis-unavailable">
-                <div className="flex size-10 items-center justify-center rounded-full bg-muted"><CircleAlert className="size-5 text-muted-foreground" aria-hidden="true" /></div>
-                <h2 className="mt-4 text-lg font-semibold">No report available</h2>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">{streamError}</p>
-                {scanAccepted && <p className="mt-3 break-all font-mono text-xs text-muted-foreground">Scan reference: {scanAccepted.scanId}</p>}
-              </div>
-            ) : (
-              <div className="rounded-xl border border-border bg-card shadow-sm">
-                <div className="border-b border-border px-5 py-5 sm:px-6">
-                  <h2 className="text-xl font-semibold tracking-tight">Your findings appear here</h2>
-                </div>
-                <div className="flex min-h-56 flex-col items-center justify-center px-6 py-10 text-center">
-                  <div className="flex size-12 items-center justify-center rounded-xl border border-border bg-muted/50"><ShieldCheck className="size-5 text-muted-foreground" aria-hidden="true" /></div>
-                  <p className="mt-4 max-w-sm text-sm leading-6 text-muted-foreground">Submit a URL or email with consent to receive an evidence-backed report. Nothing is inferred until the analyzer returns results.</p>
-                </div>
-              </div>
-            )}
-          </section>
-        </div>
-
-        {status?.queue && (
-          <p className="mt-5 text-center text-xs text-muted-foreground" data-testid="text-queue-status">
-            Queue status · {status.queue.active} active of {status.queue.activeLimit} · {status.queue.queued} waiting of {status.queue.queuedLimit}
-          </p>
-        )}
-        <footer className="mt-10 flex flex-col justify-between gap-2 border-t border-border pt-5 text-xs text-muted-foreground sm:flex-row">
-          <span>Lumio reports evidence, not certainty.</span>
-          <span>Reports and email content are not stored. One-way IP/browser counters are retained to enforce scan limits.</span>
-        </footer>
+            <div className="border-t border-border bg-card p-3 sm:p-4">
+              <CInputGroup18
+                message={chatNote}
+                attachment={attachment}
+                disabled={busy || workerUnavailable || statusQuery.isLoading || statusQuery.isError}
+                onMessageChange={(value) => { setChatNote(value); setFormError(''); }}
+                onAttachmentChange={(value) => { setAttachment(value); setFormError(''); }}
+                onSubmit={(message, selectedAttachment) => requestSubmit(message, selectedAttachment)}
+                onError={setFormError}
+              />
+              {status?.scanQuota.enabled && <p className="mx-auto mt-2 max-w-3xl px-1 text-[11px] text-muted-foreground" data-testid="status-scan-quota">Usage · Today {status.scanQuota.daily.used ?? '—'}/{status.scanQuota.daily.total} · Lifetime {status.scanQuota.lifetime.used ?? '—'}/{status.scanQuota.lifetime.total}</p>}
+              {status?.queue && <p className="mx-auto mt-1 max-w-3xl px-1 text-[11px] text-muted-foreground" data-testid="text-queue-status">Queue · {status.queue.active} active of {status.queue.activeLimit} · {status.queue.queued} waiting of {status.queue.queuedLimit}</p>}
+            </div>
+          </div>
+        </section>
+        <footer className="mx-auto mt-6 flex max-w-4xl flex-col justify-between gap-2 border-t border-border pt-4 text-xs text-muted-foreground sm:flex-row"><span>Lumio reports evidence, not certainty.</span><span>Reports and email content are not stored. One-way IP/browser counters enforce scan limits.</span></footer>
       </main>
+      <Dialog open={consentDialogOpen} onOpenChange={(open) => { setConsentDialogOpen(open); if (!open) submissionRef.current = null; }}>
+        <DialogContent aria-describedby="session-consent-copy" data-testid="dialog-first-scan-consent">
+          <DialogHeader><DialogTitle>Before Lumio checks this</DialogTitle><DialogDescription id="session-consent-copy">Your submission is sent to an isolated worker for a temporary analysis. Lumio returns deterministic evidence and coverage limits; it cannot guarantee that a URL or message is safe.</DialogDescription></DialogHeader>
+          <ul className="list-disc space-y-2 pl-5 text-sm leading-6 text-muted-foreground"><li>Only public HTTP(S) targets and .eml files are accepted.</li><li>Email link destinations are not visited unless you separately select and confirm them.</li><li>Raw email content, URLs, reports, and this conversation are not saved in this browser.</li><li>You can stop scans or withdraw consent to clear this conversation.</li></ul>
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-muted/20 p-3 text-sm leading-5">
+            <input type="checkbox" checked={summaryConsent} onChange={(event) => { setSummaryConsent(event.target.checked); summaryConsentRef.current = event.target.checked; }} data-testid="checkbox-session-ai-summary" className="mt-0.5 size-4 shrink-0 accent-foreground" />
+             <span><strong className="font-semibold">Optional AI summaries for this tab.</strong> If selected, the note you enter and redacted deterministic evidence are sent to existing Vultr inference for a short explanation and a suggested safe follow-up question. Raw URLs, raw email, attachments, and tool calls are excluded. AI cannot change the risk band or report. Vultr's retention and training terms are not verified. Do not include confidential or sensitive details in your note.</span>
+          </label>
+          <DialogFooter><button type="button" onClick={() => { setConsentDialogOpen(false); submissionRef.current = null; }} className="min-h-11 rounded-md border border-input px-4 text-sm font-medium hover:bg-muted" data-testid="button-decline-session-consent">Not now</button><button type="button" onClick={acceptSessionConsent} className="min-h-11 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:opacity-90" data-testid="button-accept-session-consent">I understand — continue</button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={batchDialogOpen} onOpenChange={setBatchDialogOpen}>
+        <DialogContent aria-describedby="batch-consent-copy" data-testid="dialog-selected-links-confirm">
+          <DialogHeader><DialogTitle>Scan selected email links?</DialogTitle><DialogDescription id="batch-consent-copy">Only the links you selected will be submitted, one by one. These destinations will be visited in separate isolated scans; queue and quota limits still apply.</DialogDescription></DialogHeader>
+          <ul className="max-h-48 space-y-2 overflow-y-auto rounded-md border border-border bg-muted/20 p-3 text-sm">{emailLinks.filter((link) => selectedLinkIds.includes(link.linkId)).map((link) => <li key={link.linkId} className="break-all"><span className="font-medium">{link.anchorText || link.targetHost}</span><span className="block font-mono text-xs text-muted-foreground">{link.displayUrl}</span></li>)}</ul>
+          <p className="text-xs leading-5 text-muted-foreground">This permission is separate from the session consent for your email. Unselected links will not be scanned.</p>
+          <DialogFooter><button type="button" onClick={() => setBatchDialogOpen(false)} className="min-h-11 rounded-md border border-input px-4 text-sm font-medium hover:bg-muted">Go back</button><button type="button" onClick={() => void runSelectedBatch()} disabled={!selectedLinkIds.length} className="min-h-11 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50" data-testid="button-confirm-link-batch">Confirm {selectedLinkIds.length} link{selectedLinkIds.length === 1 ? '' : 's'}</button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
+  );
+
+}
+
+function BatchEvidence({ report, title, summary, summaryStatus, summaryError }: { report: ScanReport; title: string; summary: string; summaryStatus: 'idle' | 'streaming' | 'complete' | 'error'; summaryError: string }) {
+  const attachments = report.findings.filter((finding) => finding.source === 'attachment_metadata');
+  function exportResult() {
+    const objectUrl = URL.createObjectURL(new Blob([reportHtml(report, summary)], { type: 'text/html;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = `lumio-report-${report.scanId}.html`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  }
+  function printResult() {
+    let printWindow: Window | null = null;
+    try {
+      printWindow = window.open('', '_blank');
+      if (!printWindow) { toast.error('Allow pop-ups to open the print-ready report.'); return; }
+      const printableWindow = printWindow;
+      printableWindow.document.open();
+      printableWindow.document.write(reportHtml(report, summary));
+      printableWindow.document.close();
+      printableWindow.opener = null;
+      printableWindow.requestAnimationFrame(() => {
+        printableWindow.requestAnimationFrame(() => {
+          if (printableWindow.closed) return;
+          printableWindow.focus();
+          printableWindow.print();
+        });
+      });
+    } catch {
+      printWindow?.close();
+      toast.error('The print-ready report could not be opened. Your report is unchanged.');
+    }
+  }
+  return (
+    <article className="mt-4 rounded-xl border border-border bg-card p-4" aria-label={`Evidence report for ${title}`} data-testid={`batch-report-${report.scanId}`}>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div><p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Earlier analysis</p><h4 className="mt-1 text-sm font-semibold">{title}</h4><p className="mt-1 text-xs text-muted-foreground">{riskLabel(report.riskBand)} risk · Completed {formatDate(report.completedAt)} · Ruleset {report.ruleSetVersion}</p></div>
+        <div className="flex gap-2"><button type="button" onClick={exportResult} className="min-h-10 rounded-md border border-input px-3 text-xs font-medium hover:bg-muted" data-testid={`button-export-${report.scanId}`}>Export HTML</button><button type="button" onClick={printResult} className="min-h-10 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:opacity-90" data-testid={`button-print-${report.scanId}`}>Print / PDF</button></div>
+      </header>
+      <p className="mt-3 rounded-md border border-border bg-muted/30 p-3 text-xs leading-5">{report.coverage.sufficient ? 'Coverage marked sufficient by the analyzer.' : 'Coverage is limited. A missing check is not evidence of safety.'} This result is not a guarantee that the submitted item is safe.</p>
+      <h5 className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Evidence and findings</h5>
+      {report.findings.length ? <ul className="mt-2 divide-y divide-border rounded-lg border border-border">{report.findings.map((finding) => <li key={finding.id} className="p-3"><div className="text-xs font-medium">{finding.severity} · {finding.strength} · {finding.source.replace(/_/g, ' ')}</div><h6 className="mt-1 text-sm font-semibold">{finding.title}</h6><p className="mt-1 text-sm leading-5 text-muted-foreground">{finding.explanation}</p>{finding.sanitizedObservedValue && <pre className="mt-2 whitespace-pre-wrap break-all rounded bg-muted/50 p-2 font-mono text-xs">{finding.sanitizedObservedValue}</pre>}{finding.limitations?.map((limitation, index) => <p key={`${finding.id}-${index}`} className="mt-2 text-xs text-muted-foreground">Limitation: {limitation}</p>)}</li>)}</ul> : <p className="mt-2 rounded-lg border border-dashed border-border p-3 text-sm text-muted-foreground">No findings were returned. This does not establish safety.</p>}
+      <h5 className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Coverage</h5>
+      <ul className="mt-2 space-y-1 text-xs text-muted-foreground">{report.coverage.checks.map((check, index) => <li key={`${check.name}-${index}`}>{check.name}: {check.status}{check.reason ? ` · ${check.reason}` : ''}</li>)}</ul>
+      {summaryStatus === 'streaming' && <p className="mt-4 text-xs text-muted-foreground" role="status">Preparing the optional AI summary…</p>}
+      {summaryError && <p className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground" role="status">{summaryError} The deterministic report is unchanged.</p>}
+      {summary && <section className="mt-4 rounded-lg border border-border bg-muted/20 p-3" aria-label="Optional AI summary"><h5 className="text-xs font-semibold">Optional AI summary</h5><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{summary}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">This text is an explanation only. It does not change the deterministic report or establish safety.</p></section>}
+      {attachments.length > 0 && <section className="mt-4 rounded-lg border border-border bg-muted/20 p-3"><h5 className="text-xs font-semibold">Attachment metadata only</h5><p className="mt-1 text-xs leading-5 text-muted-foreground">Attachment contents were not opened or analyzed.</p>{attachments.map((finding) => <p key={finding.id} className="mt-2 text-xs">{finding.title}{finding.sanitizedObservedValue ? ` · ${finding.sanitizedObservedValue}` : ''}</p>)}</section>}
+    </article>
   );
 }
 
@@ -1078,19 +1575,13 @@ function ReportView({
   onExport,
   onPrint,
   emailLinks,
-  selectedLinkId,
-  setSelectedLinkId,
-  linkConsent,
-  setLinkConsent,
-  onScanLink,
-  selectedLinkPending,
-  explanationConsent,
-  setExplanationConsent,
-  explanationText,
-  explanationError,
-  explanationStatus,
-  onExplain,
-  onCancelExplanation,
+  selectedLinkIds,
+  setSelectedLinkIds,
+  onOpenBatch,
+  summaryEnabled,
+  summaryText,
+  summaryError,
+  summaryStatus,
   approvalRequest,
   approvalPending,
   approvalError,
@@ -1102,19 +1593,13 @@ function ReportView({
   onExport: () => void;
   onPrint: () => boolean;
   emailLinks: NonNullable<ScanReport['links']>;
-  selectedLinkId: string;
-  setSelectedLinkId: (id: string) => void;
-  linkConsent: boolean;
-  setLinkConsent: (consent: boolean) => void;
-  onScanLink: () => void;
-  selectedLinkPending: boolean;
-  explanationConsent: boolean;
-  setExplanationConsent: (consent: boolean) => void;
-  explanationText: string;
-  explanationError: string;
-  explanationStatus: 'idle' | 'streaming' | 'complete' | 'error';
-  onExplain: () => void;
-  onCancelExplanation: () => void;
+  selectedLinkIds: string[];
+  setSelectedLinkIds: (ids: string[]) => void;
+  onOpenBatch: () => void;
+  summaryEnabled: boolean;
+  summaryText: string;
+  summaryError: string;
+  summaryStatus: 'idle' | 'streaming' | 'complete' | 'error';
   approvalRequest: AgentApprovalRequest | null;
   approvalPending: boolean;
   approvalError: string;
@@ -1271,50 +1756,20 @@ function ReportView({
           {approvalError && <p className="mt-3 text-sm text-destructive" role="status" data-testid="status-agent-approval-error">{approvalError}</p>}
         </section>
 
-        {report.explanationToken && (
-          <section className="mt-6 rounded-lg border border-border bg-muted/20 p-4" aria-labelledby="explanation-title" data-testid="section-ai-explanation">
+        {summaryEnabled && (summaryStatus !== 'idle' || !!summaryError || !!summaryText) && (
+          <section className="mt-6 rounded-lg border border-border bg-muted/20 p-4" aria-labelledby="summary-title" data-testid="section-ai-summary">
             <div className="flex items-start gap-3">
               <Sparkles className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <div className="min-w-0">
-                <h3 id="explanation-title" className="text-sm font-semibold">Optional AI explanation</h3>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground print:hidden">
-                  If you opt in, Lumio sends Vultr a short redacted summary of this report—not the raw email, full URL, or email link list. Vultr’s prompt-retention and model-training terms have not been verified. The explanation may be wrong and never changes the risk band.
-                </p>
+                <h3 id="summary-title" className="text-sm font-semibold">Optional AI summary</h3>
+                {summaryStatus === 'streaming' && <p className="mt-1 text-xs text-muted-foreground" role="status" data-testid="status-ai-summary-streaming">Preparing a short explanation and safe follow-up suggestion…</p>}
               </div>
             </div>
-            <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-md border border-border bg-background p-3 text-sm leading-5 print:hidden">
-              <input type="checkbox" checked={explanationConsent}
-                onChange={(event) => setExplanationConsent(event.target.checked)}
-                disabled={explanationStatus === 'streaming' || explanationStatus === 'complete'}
-                data-testid="checkbox-ai-explanation-consent"
-                className="mt-0.5 size-4 shrink-0 accent-foreground" />
-              <span>I consent to send this redacted evidence summary to Vultr for an explanation.</span>
-            </label>
-            <div className="mt-3 flex flex-wrap gap-2 print:hidden">
-              <button type="button" onClick={onExplain}
-                disabled={!explanationConsent || explanationStatus === 'streaming' || explanationStatus === 'complete' || (explanationStatus === 'error' && !!explanationText)}
-                data-testid="button-request-ai-explanation"
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
-                {explanationStatus === 'streaming' ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : <Sparkles className="size-4" aria-hidden="true" />}
-                {explanationStatus === 'error' && !explanationText ? 'Retry explanation' : explanationStatus === 'complete' ? 'Explanation complete' : 'Explain this report'}
-              </button>
-              {explanationStatus === 'streaming' && (
-                <button type="button" onClick={onCancelExplanation}
-                  data-testid="button-cancel-ai-explanation"
-                  className="inline-flex min-h-11 items-center justify-center rounded-lg border border-input bg-background px-4 text-sm font-medium hover:bg-muted">
-                  Cancel
-                </button>
-              )}
-            </div>
-            {explanationError && <p className="mt-3 text-sm text-destructive print:hidden" role="status" data-testid="status-ai-explanation-error">{explanationError}</p>}
-            {explanationStatus === 'streaming' && <p className="mt-3 text-xs text-muted-foreground print:hidden" role="status" data-testid="status-ai-explanation-streaming">Streaming a short explanation from Vultr Serverless Inference…</p>}
-            {explanationText && (
-              <div className="mt-4 rounded-md border border-border bg-background p-4" aria-live="polite" data-testid="text-ai-explanation">
-                <h4 className="text-sm font-semibold">Model-generated explanation</h4>
-                <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{explanationText}</p>
-                <p className="mt-3 text-xs leading-5 text-muted-foreground">Explanation only. Use the deterministic evidence and coverage above as the report; this text does not establish that the item is safe.</p>
-              </div>
-            )}
+            {summaryError && <p className="mt-3 rounded-md border border-border bg-background p-3 text-sm leading-5 text-muted-foreground" role="status" data-testid="status-ai-summary-error">{summaryError} The deterministic report is unchanged.</p>}
+            {summaryText && <div className="mt-4 rounded-md border border-border bg-background p-4" aria-live="polite" data-testid="text-ai-summary">
+              <p className="whitespace-pre-wrap break-words text-sm leading-6">{summaryText}</p>
+              <p className="mt-3 text-xs leading-5 text-muted-foreground">AI-generated explanation only. Use the deterministic evidence and coverage above as the report; this text does not establish safety.</p>
+            </div>}
           </section>
         )}
 
@@ -1329,31 +1784,26 @@ function ReportView({
         {!!emailLinks.length && (
           <section className="mt-6 border-t border-border pt-5" aria-labelledby="email-links-title">
             <div className="flex items-start justify-between gap-4">
-              <div><h3 id="email-links-title" className="text-sm font-semibold">Links found in this email</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Displaying up to 50 sanitized links. A separate scan requires a new, explicit consent.</p></div>
+              <div><h3 id="email-links-title" className="text-sm font-semibold">Links found in this email</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Select only destinations you want to inspect. Links are never visited automatically.</p></div>
               <span className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">{emailLinks.length} shown</span>
             </div>
             <div className="mt-3 space-y-2">
               {emailLinks.map((link) => (
-                <label key={link.linkId} className={`flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors ${selectedLinkId === link.linkId ? 'border-primary/50 bg-muted/50' : 'border-border hover:bg-muted/30'}`}>
-                  <input type="radio" name="email-link-choice" value={link.linkId} checked={selectedLinkId === link.linkId}
-                    onChange={() => setSelectedLinkId(link.linkId)} data-testid={`radio-email-link-${link.linkId}`} className="mt-1 size-4 shrink-0 accent-foreground" />
+                <label key={link.linkId} className={`flex cursor-pointer gap-3 rounded-lg border p-3 transition-colors ${selectedLinkIds.includes(link.linkId) ? 'border-primary/50 bg-muted/50' : 'border-border hover:bg-muted/30'} ${!link.scanAvailable ? 'cursor-not-allowed opacity-60' : ''}`}>
+                  <input type="checkbox" value={link.linkId} disabled={!link.scanAvailable} checked={selectedLinkIds.includes(link.linkId)}
+                    onChange={(event) => setSelectedLinkIds(event.target.checked ? [...selectedLinkIds, link.linkId] : selectedLinkIds.filter((id) => id !== link.linkId))} data-testid={`checkbox-email-link-${link.linkId}`} className="mt-1 size-4 shrink-0 accent-foreground" />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-1 text-sm font-medium">{link.anchorText || link.targetHost}{link.scanAvailable && <ArrowUpRight className="size-3.5 text-muted-foreground" aria-hidden="true" />}</span>
                     <span className="mt-1 block break-all font-mono text-xs text-muted-foreground">{link.displayUrl}</span>
-                    <span className="mt-1 block text-xs text-muted-foreground">Destination host: {link.targetHost} · {link.scanAvailable ? 'separate scan available' : 'separate scan unavailable'}</span>
+                    <span className="mt-1 block text-xs text-muted-foreground">Destination host: {link.targetHost} · {link.scanAvailable ? 'eligible for a separate scan' : 'not available for a separate scan'}</span>
                   </span>
                 </label>
               ))}
             </div>
-            <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-muted/20 p-3 text-sm leading-5">
-              <input type="checkbox" checked={linkConsent} onChange={(event) => setLinkConsent(event.target.checked)}
-                data-testid="checkbox-selected-link-consent" className="mt-0.5 size-4 shrink-0 accent-foreground" />
-              <span>I separately consent to visit and analyze the selected link in an isolated session.</span>
-            </label>
-            <button type="button" onClick={onScanLink} disabled={!selectedLinkId || !linkConsent || selectedLinkPending || !emailLinks.find((link) => link.linkId === selectedLinkId)?.scanAvailable}
+            <button type="button" onClick={onOpenBatch} disabled={!selectedLinkIds.length}
               data-testid="button-scan-selected-link" className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-input bg-background px-4 text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">
-              {selectedLinkPending ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : <Globe2 className="size-4" aria-hidden="true" />}
-              Scan selected link
+              <Globe2 className="size-4" aria-hidden="true" />
+              Review {selectedLinkIds.length || ''} selected link{selectedLinkIds.length === 1 ? '' : 's'}
             </button>
           </section>
         )}

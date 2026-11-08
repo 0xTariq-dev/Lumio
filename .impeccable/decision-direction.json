@@ -1,0 +1,151 @@
+{
+  "title": "Choose Lumio’s visual direction",
+  "question": "Which visual world should guide Lumio’s investigation chat?",
+  "options": [
+    {
+      "id": "registered-post",
+      "kind": "assigned",
+      "label": "Registered Post",
+      "kicker": "THE ROLL",
+      "lineage": "Registered-mail dispatch slips",
+      "thesis": "A scan travels through clear checkpoints, then returns as an evidence receipt.",
+      "palette": ["#15384B", "#EC6A3A", "#E8F1ED", "#F6F5F0"],
+      "materials": ["dispatch ink", "numbered receipt slips"],
+      "viewport": "A familiar chat thread carries one investigation, its live progress, and the results that arrive.",
+      "risk": "The delivery metaphor must stay subtle; this is security analysis, not parcel tracking.",
+      "raised": [
+        {
+          "from": "Vertical Media",
+          "raise": "Keep one active investigation visually dominant; never split the work into competing panels."
+        },
+        {
+          "from": "Emigre Bitmap Specimen",
+          "raise": "Use a clear type ladder for conversation, evidence titles, and technical values."
+        },
+        {
+          "from": "Manual Acetate Tabs",
+          "raise": "Show the current step and waiting steps with distinct, plainly labeled states."
+        },
+        {
+          "from": "Saville Catalog Sleeve",
+          "raise": "Keep every status readable as words; do not encode meaning in color alone."
+        },
+        {
+          "from": "Darkroom Exposure Record",
+          "raise": "Pair state color with a text label and an icon so evidence remains clear in any lighting."
+        }
+      ],
+      "html": ".impeccable/mocks/decision/registered-post.html",
+      "htmlFrame": "1440x900"
+    },
+    {
+      "id": "support-conversation",
+      "kind": "pick",
+      "label": "Support Conversation",
+      "kicker": "IMPECCABLE’S PICK",
+      "lineage": "A helpful one-to-one service conversation",
+      "thesis": "Lumio guides each person through a check in a familiar conversation.",
+      "palette": ["#1C3D35", "#D85B37", "#EEF4EF", "#FBFAF6"],
+      "materials": ["clear message surfaces", "evidence attachments"],
+      "viewport": "A conversational thread makes it easy to submit a link or email and follow the result.",
+      "risk": "The familiar pattern may feel like a generic assistant without evidence-specific details.",
+      "html": ".impeccable/mocks/decision/support-conversation.html",
+      "htmlFrame": "1440x900"
+    },
+    {
+      "id": "grid-evidence",
+      "kind": "challenger",
+      "catalogId": "crouwel-grid-specimen",
+      "label": "Grid-Bound Evidence",
+      "verdict": "competitive",
+      "lineage": "Wim Crouwel’s grid-constructed type",
+      "thesis": "A visible grid connects each scan step to the evidence it produced.",
+      "palette": ["#183A6B", "#DCE8F4", "#F2C14E", "#FFFFFF"],
+      "materials": ["construction grid", "cell-built type"],
+      "viewport": "The chat remains standard; a restrained grid marks progress and aligns each evidence note.",
+      "case": "Holds product clarity by mapping steps to evidence; the register is less familiar to general users.",
+      "risk": "Keep the grid out of long reading text and never let it resemble a technical console.",
+      "html": ".impeccable/mocks/decision/grid-evidence.html",
+      "htmlFrame": "1440x900"
+    },
+    {
+      "id": "vertical-focus",
+      "kind": "challenger",
+      "catalogId": "pop-culture-shelf-vertical-video-feed-surface",
+      "label": "Vertical Media",
+      "verdict": "declined",
+      "lineage": "Full-screen vertical media feeds",
+      "thesis": "One item fills the screen while actions line a vertical rail.",
+      "palette": ["#111111", "#FFFFFF"],
+      "materials": ["full-bleed media", "bottom scrim"],
+      "case": "Does not carry a multi-step investigation or an evidence report.",
+      "kept": "Keep one active investigation visually dominant."
+    },
+    {
+      "id": "bitmap-type",
+      "kind": "challenger",
+      "catalogId": "emigre-bitmap-specimen",
+      "label": "Bitmap Specimen",
+      "verdict": "declined",
+      "lineage": "Emigre bitmap type specimens",
+      "thesis": "Pixel-built letterforms turn a type specimen into the main event.",
+      "palette": ["#FFFFFF", "#141414", "#426C63"],
+      "materials": ["bitmap type", "dot-matrix pattern"],
+      "case": "Display lettering would compete with reading detailed findings.",
+      "kept": "Give conversation, evidence, and technical values distinct type roles."
+    },
+    {
+      "id": "manual-tabs",
+      "kind": "challenger",
+      "catalogId": "rw-manual-acetate-tab-board",
+      "label": "Manual Tabs",
+      "verdict": "declined",
+      "lineage": "Tabbed software reference manuals",
+      "thesis": "Layered translucent leaves expose one selected reference at a time.",
+      "palette": ["#F3EBD8", "#D2A71E", "#1C3135"],
+      "materials": ["acetate overlays", "section boards"],
+      "case": "Its page-and-tab model makes the conversation harder to follow.",
+      "kept": "Make current, waiting, and finished scan steps easy to tell apart."
+    },
+    {
+      "id": "catalog-sleeve",
+      "kind": "challenger",
+      "catalogId": "brand-identity-canon-saville-catalog-sleeve",
+      "label": "Catalog Sleeve",
+      "verdict": "declined",
+      "lineage": "Coded record sleeves",
+      "thesis": "A coded color strip reveals a catalog entry’s identity.",
+      "palette": ["#101010", "#FFFFFF", "#DA4B37"],
+      "materials": ["matte black", "line plots", "coded color"],
+      "case": "Encoded labels add work to a task that needs plain language.",
+      "kept": "Use consistent labels for every progress and report state."
+    },
+    {
+      "id": "exposure-record",
+      "kind": "challenger",
+      "catalogId": "operate-b-exposure-record-zone-sheets",
+      "label": "Exposure Record",
+      "verdict": "declined",
+      "lineage": "Darkroom exposure records",
+      "thesis": "Overlaid tonal sheets show measured changes and conflicts.",
+      "palette": ["#E8E8E1", "#292F35", "#B42D79"],
+      "materials": ["translucent sheets", "hatch marks"],
+      "case": "The exposure scale has no familiar meaning for this audience.",
+      "kept": "Pair status color with labels and symbols."
+    }
+  ],
+  "reroll": {
+    "registers": ["safer", "bolder"]
+  },
+  "canon": true,
+  "canonCard": {
+    "kind": "canon",
+    "label": "Familiar Chat App",
+    "thesis": "A standard chat interface, executed to the highest craft.",
+    "palette": ["#FFFFFF", "#111827", "#2563EB"],
+    "materials": ["clear message surfaces", "simple status labels"],
+    "viewport": "The expected chat layout with a clear composer, readable messages, and a visible scan report.",
+    "risk": "Familiar and direct, but easy to confuse with other chat tools."
+  },
+  "steer": true
+}

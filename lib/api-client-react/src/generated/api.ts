@@ -549,8 +549,8 @@ export const getCancelScanUrl = (scanId: string,) => {
 }
 
 /**
- * Stops an active isolated scan and returns a partial report when available.
- * @summary Cancel an active scan
+ * Stops worker work for one scan. Completed reports remain unchanged.
+ * @summary Cancel one queued or running scan
  */
 export const cancelScan = async (scanId: string, options?: Parameters<typeof customFetch>[1]): Promise<ScanCancellation> => {
 
@@ -602,7 +602,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type CancelScanMutationVariables = {scanId: string}
 
     /**
- * @summary Cancel an active scan
+ * @summary Cancel one queued or running scan
  */
 export const useCancelScan = <TError = ErrorType<ApiError>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelScan>>, TError,CancelScanMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
@@ -725,9 +725,10 @@ export const getStreamScanExplanationUrl = (scanId: string,) => {
 }
 
 /**
- * Requires separate per-scan consent and a short-lived, browser-bound
- * evidence token. Sends only a bounded, redacted evidence summary to
- * Vultr Serverless Inference. The explanation cannot alter the report.
+ * Requires explicit session consent and a short-lived, browser-bound
+ * evidence token. Sends a bounded, redacted evidence summary and an
+ * optional sanitized user note to Vultr Serverless Inference. The model
+ * has no tools and cannot alter the deterministic report.
  * @summary Stream an optional explanation of a completed report
  */
 export const streamScanExplanation = async (scanId: string,
@@ -909,7 +910,7 @@ export const getStreamScanEventsUrl = (scanId: string,) => {
 
 /**
  * Server-Sent Events. Events are `progress` (ScanProgress), `completed` (ScanReport),
- * or `failed` (ApiError). A completed report is delivered to the connected client only
+ * `failed` (ApiError), or `cancelled` (ScanCancellationNotice). A completed report is delivered to the connected client only
  * and is not retained server-side. EventSource is used by the client for this stream.
  * @summary Stream transient scan progress and final report
  */

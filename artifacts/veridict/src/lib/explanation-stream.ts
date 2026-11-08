@@ -63,10 +63,12 @@ export async function streamReportExplanation(
   explanationToken: string,
   signal: AbortSignal,
   onDelta: (text: string) => void,
+  userMessage = '',
 ): Promise<void> {
   const body: ExplanationConsentInput = {
     consent: true,
     explanationToken,
+    ...(userMessage ? { userMessage } : {}),
   };
   const response = await fetch(getStreamScanExplanationUrl(scanId), {
     method: "POST",

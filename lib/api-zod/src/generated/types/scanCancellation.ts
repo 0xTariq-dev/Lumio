@@ -9,6 +9,6 @@ import type { ScanCancellationStatus } from './scanCancellationStatus';
 
 export interface ScanCancellation {
   scanId: string;
-  status: ScanCancellationStatus;
   cancelled: boolean;
+  status: ScanCancellationStatus;
 }

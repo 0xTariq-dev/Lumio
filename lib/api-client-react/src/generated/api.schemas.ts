@@ -90,6 +90,11 @@ export interface ExplanationConsentInput {
      * @maxLength 12000
      */
   explanationToken: string;
+  /**
+     * Optional user context. Common URLs, hosts, contact details, and credential patterns are redacted before inference.
+     * @maxLength 1200
+     */
+  userMessage?: string;
 }
 
 export type AgentApprovalDecisionInputDecision = typeof AgentApprovalDecisionInputDecision[keyof typeof AgentApprovalDecisionInputDecision];
@@ -154,24 +159,6 @@ export interface AgentCancellationResponse {
   cancelledApprovalRequests: number;
 }
 
-export type ScanCancellationStatus = typeof ScanCancellationStatus[keyof typeof ScanCancellationStatus];
-
-
-export const ScanCancellationStatus = {
-  queued: 'queued',
-  running: 'running',
-  cancelling: 'cancelling',
-  cancelled: 'cancelled',
-  completed: 'completed',
-  failed: 'failed',
-} as const;
-
-export interface ScanCancellation {
-  scanId: string;
-  status: ScanCancellationStatus;
-  cancelled: boolean;
-}
-
 export type ScanAcceptedStatus = typeof ScanAcceptedStatus[keyof typeof ScanAcceptedStatus];
 
 
@@ -185,6 +172,37 @@ export interface ScanAccepted {
   status: ScanAcceptedStatus;
   eventsPath: string;
   expiresAt: string;
+}
+
+export type ScanCancellationStatus = typeof ScanCancellationStatus[keyof typeof ScanCancellationStatus];
+
+
+export const ScanCancellationStatus = {
+  queued: 'queued',
+  running: 'running',
+  completed: 'completed',
+  failed: 'failed',
+  cancelled: 'cancelled',
+} as const;
+
+export interface ScanCancellation {
+  scanId: string;
+  cancelled: boolean;
+  status: ScanCancellationStatus;
+}
+
+export type ScanCancellationNoticeCode = typeof ScanCancellationNoticeCode[keyof typeof ScanCancellationNoticeCode];
+
+
+export const ScanCancellationNoticeCode = {
+  SCAN_CANCELLED: 'SCAN_CANCELLED',
+} as const;
+
+export interface ScanCancellationNotice {
+  code: ScanCancellationNoticeCode;
+  /** @maxLength 160 */
+  message: string;
+  retryable: boolean;
 }
 
 export type ScanSnapshotType = typeof ScanSnapshotType[keyof typeof ScanSnapshotType];

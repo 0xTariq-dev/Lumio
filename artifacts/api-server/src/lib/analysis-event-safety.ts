@@ -7,6 +7,15 @@ export type PublicWorkerFailureEvent = {
   };
 };
 
+export type PublicWorkerCancellationEvent = {
+  event: "cancelled";
+  data: {
+    code: "SCAN_CANCELLED";
+    message: string;
+    retryable: true;
+  };
+};
+
 export function toPublicWorkerFailureEvent(
   _workerPayload: unknown,
 ): PublicWorkerFailureEvent {
@@ -20,6 +29,19 @@ export function toPublicWorkerFailureEvent(
   };
 }
 
+export function toPublicWorkerCancellationEvent(
+  _workerPayload: unknown,
+): PublicWorkerCancellationEvent {
+  return {
+    event: "cancelled",
+    data: {
+      code: "SCAN_CANCELLED",
+      message: "This scan was cancelled. Completed results remain available.",
+      retryable: true,
+    },
+  };
+}
+
 export function isTerminalAnalysisEvent(event: string): boolean {
-  return event === "completed" || event === "failed";
+  return event === "completed" || event === "failed" || event === "cancelled";
 }

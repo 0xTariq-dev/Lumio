@@ -13,4 +13,9 @@ export interface ExplanationConsentInput {
      * @maxLength 12000
      */
   explanationToken: string;
+  /**
+     * Optional user context. Common URLs, hosts, contact details, and credential patterns are redacted before inference.
+     * @maxLength 1200
+     */
+  userMessage?: string;
 }
