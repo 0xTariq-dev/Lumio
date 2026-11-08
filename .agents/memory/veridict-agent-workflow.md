@@ -14,3 +14,9 @@ Vultr's Serverless Inference `/v1/models` endpoint returned HTTP 200 without aut
 **Why:** The first synthetic chat-completion request returned HTTP 401 even though the public model catalog was reachable.
 
 **How to apply:** Validate credentials with a minimal synthetic chat-completion request. Never use real scan or email content for credential troubleshooting.
+
+Do not use Vultr's account-level `POST /v2/apikeys` endpoint as the Serverless Inference credential. It creates a general current-user Vultr API key; inference uses the key assigned to a specific inference subscription.
+
+**Why:** The official Vultr documentation distinguishes current-user API key creation from each subscription's own inference API key.
+
+**How to apply:** Use the subscription's **Copy API Key** action in its Overview, or have the account owner retrieve its `api_key` through the documented read-only inference-detail endpoint. Keep account-control and model-inference credentials separate.
