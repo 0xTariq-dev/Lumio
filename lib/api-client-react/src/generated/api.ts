@@ -26,8 +26,10 @@ import type {
 
 import type {
   AgentApprovalDecisionInput,
+  AgentApprovalRequest,
   AgentApprovalResponse,
   AgentCancellationResponse,
+  AgentProposalTriggerInput,
   AnalysisStatus,
   ApiError,
   EmailScanInput,
@@ -915,6 +917,96 @@ export const useResolveAgentApproval = <TError = ErrorType<ApiError>,
         TContext
       > => {
       return useMutation(getResolveAgentApprovalMutationOptions(options), queryClient);
+    }
+
+export const getCreateAgentProposalUrl = (scanId: string,) => {
+
+
+
+
+  return `/api/scans/${scanId}/agent/proposals`
+}
+
+/**
+ * Requires a completed deterministic scan. The response is a pending proposal; no tool is dispatched.
+ * @summary Request one approval-gated follow-up proposal
+ */
+export const createAgentProposal = async (scanId: string,
+    agentProposalTriggerInput: AgentProposalTriggerInput, options?: Parameters<typeof customFetch>[1]): Promise<AgentApprovalRequest> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AgentApprovalRequest>(getCreateAgentProposalUrl(scanId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(agentProposalTriggerInput)
+  }
+);}
+
+
+
+
+
+export const getCreateAgentProposalMutationKey = () => ['createAgentProposal'] as const;
+
+export const getCreateAgentProposalMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAgentProposal>>, TError,CreateAgentProposalMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAgentProposal>>, TError,CreateAgentProposalMutationVariables, TContext> => {
+
+const mutationKey = getCreateAgentProposalMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAgentProposal>>, CreateAgentProposalMutationVariables> = (props) => {
+          const {scanId,data} = props ?? {};
+
+          return  createAgentProposal(scanId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAgentProposalMutationResult = NonNullable<Awaited<ReturnType<typeof createAgentProposal>>>
+    export type CreateAgentProposalMutationBody = BodyType<AgentProposalTriggerInput>
+    export type CreateAgentProposalMutationError = ErrorType<ApiError>
+    export type CreateAgentProposalMutationVariables = {scanId: string;data: BodyType<AgentProposalTriggerInput>}
+
+    /**
+ * @summary Request one approval-gated follow-up proposal
+ */
+export const useCreateAgentProposal = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAgentProposal>>, TError,CreateAgentProposalMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createAgentProposal>>,
+        TError,
+        CreateAgentProposalMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateAgentProposalMutationOptions(options), queryClient);
     }
 
 export const getCancelAgentApprovalsUrl = (scanId: string,) => {

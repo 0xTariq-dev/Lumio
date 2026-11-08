@@ -7,8 +7,11 @@ import {
   useGetScan,
   getGetScanQueryKey,
   useCreateSelectedEmailLinkScan,
+  useCreateAgentProposal,
+  useResolveAgentApproval,
+  useCancelAgentApprovals,
 } from '@workspace/api-client-react';
-import type { ScanAccepted, ScanProgress, ScanReport } from '@workspace/api-client-react';
+import type { AgentApprovalRequest, ScanAccepted, ScanProgress, ScanReport } from '@workspace/api-client-react';
 import {
   AlertCircle,
   ArrowUpRight,
@@ -282,6 +285,9 @@ export default function AnalyzerPage() {
   const createUrl = useCreateUrlScan();
   const createEmail = useCreateEmailScan();
   const createSelectedLink = useCreateSelectedEmailLinkScan();
+  const createAgentProposal = useCreateAgentProposal();
+  const resolveAgentApprovalMutation = useResolveAgentApproval();
+  const cancelAgentApprovals = useCancelAgentApprovals();
   const [mode, setMode] = useState<InputMode>('url');
   const [url, setUrl] = useState('');
   const [urlConsent, setUrlConsent] = useState(false);
@@ -301,6 +307,8 @@ export default function AnalyzerPage() {
   const [explanationText, setExplanationText] = useState('');
   const [explanationError, setExplanationError] = useState('');
   const [explanationStatus, setExplanationStatus] = useState<'idle' | 'streaming' | 'complete' | 'error'>('idle');
+  const [approvalRequest, setApprovalRequest] = useState<AgentApprovalRequest | null>(null);
+  const [approvalError, setApprovalError] = useState('');
   const explanationAbortRef = useRef<AbortController | null>(null);
   const scanQuery = useGetScan(scanAccepted?.scanId ?? '', {
     query: {
@@ -391,6 +399,8 @@ export default function AnalyzerPage() {
     setExplanationText('');
     setExplanationError('');
     setExplanationStatus('idle');
+    setApprovalRequest(null);
+    setApprovalError('');
     setUrlConsent(false);
     setEmailConsent(false);
     setLinkConsent(false);
@@ -565,6 +575,44 @@ export default function AnalyzerPage() {
 
   function cancelExplanation() {
     explanationAbortRef.current?.abort();
+  }
+
+  function requestAgentProposal() {
+    if (!activeReport) return;
+    setApprovalError('');
+    createAgentProposal.mutate(
+      { scanId: activeReport.scanId, data: { scanType: activeReport.type } },
+      {
+        onSuccess: (request) => setApprovalRequest(request),
+        onError: () => setApprovalError('A follow-up proposal could not be prepared. Your report is unchanged.'),
+      },
+    );
+  }
+
+  function resolveAgentApproval(decision: 'approve' | 'decline') {
+    if (!approvalRequest) return;
+    resolveAgentApprovalMutation.mutate(
+      {
+        scanId: approvalRequest.scanId,
+        requestId: approvalRequest.requestId,
+        data: { decision },
+      },
+      {
+        onSuccess: () => setApprovalRequest(null),
+        onError: () => setApprovalError('This approval request could not be resolved. Your report is unchanged.'),
+      },
+    );
+  }
+
+  function cancelAgentApproval() {
+    if (!approvalRequest) return;
+    cancelAgentApprovals.mutate(
+      { scanId: approvalRequest.scanId },
+      {
+        onSuccess: () => setApprovalRequest(null),
+        onError: () => setApprovalError('The approval request could not be canceled.'),
+      },
+    );
   }
 
   const readinessText = statusQuery.isLoading
@@ -748,7 +796,13 @@ export default function AnalyzerPage() {
                 explanationConsent={explanationConsent} setExplanationConsent={setExplanationConsent}
                 explanationText={explanationText} explanationError={explanationError}
                 explanationStatus={explanationStatus} onExplain={requestExplanation}
-                onCancelExplanation={cancelExplanation} />
+                onCancelExplanation={cancelExplanation}
+                approvalRequest={approvalRequest}
+                approvalPending={createAgentProposal.isPending || resolveAgentApprovalMutation.isPending || cancelAgentApprovals.isPending}
+                approvalError={approvalError}
+                onContinue={requestAgentProposal}
+                onResolveApproval={resolveAgentApproval}
+                onCancelApproval={cancelAgentApproval} />
             ) : streamError ? (
               <div className="rounded-xl border border-border bg-card p-6 shadow-sm" role="status" data-testid="status-analysis-unavailable">
                 <div className="flex size-10 items-center justify-center rounded-full bg-muted"><CircleAlert className="size-5 text-muted-foreground" aria-hidden="true" /></div>
@@ -802,6 +856,12 @@ function ReportView({
   explanationStatus,
   onExplain,
   onCancelExplanation,
+  approvalRequest,
+  approvalPending,
+  approvalError,
+  onContinue,
+  onResolveApproval,
+  onCancelApproval,
 }: {
   report: ScanReport;
   onExport: () => void;
@@ -820,6 +880,12 @@ function ReportView({
   explanationStatus: 'idle' | 'streaming' | 'complete' | 'error';
   onExplain: () => void;
   onCancelExplanation: () => void;
+  approvalRequest: AgentApprovalRequest | null;
+  approvalPending: boolean;
+  approvalError: string;
+  onContinue: () => void;
+  onResolveApproval: (decision: 'approve' | 'decline') => void;
+  onCancelApproval: () => void;
 }) {
   const [printError, setPrintError] = useState('');
   const riskColor = report.riskBand === 'critical' || report.riskBand === 'high'
@@ -830,6 +896,17 @@ function ReportView({
         ? 'border-border bg-background text-foreground'
         : 'border-border bg-muted/30 text-muted-foreground';
   const attachments = report.findings.filter((finding) => finding.source === 'attachment_metadata');
+  const proposal = approvalRequest?.proposal;
+  const proposalPurpose = typeof proposal?.purpose === 'string' ? proposal.purpose : 'A bounded follow-up analysis was proposed.';
+  const proposalTarget = typeof proposal?.target === 'string' ? proposal.target.replace(/_/g, ' ') : 'current scan';
+  const proposalAction = typeof proposal?.tool === 'string'
+    ? proposal.tool.replace(/_/g, ' ')
+    : 'typed evidence request';
+  const proposalFields = Array.isArray(proposal?.requestedFields)
+    ? proposal.requestedFields
+    : Array.isArray(proposal?.fields)
+      ? proposal.fields
+      : [];
   return (
     <article id="lumio-print-report" className="overflow-hidden rounded-xl border border-border bg-card shadow-sm" data-testid="report-analysis">
       <header className="border-b border-border px-5 py-5 sm:px-6">
@@ -903,6 +980,47 @@ function ReportView({
         {!!report.executionPlan?.length && (
           <ExecutionPlanList steps={report.executionPlan} testId="report-execution-plan" type={report.type} />
         )}
+
+        <section className="mt-6 rounded-lg border border-border bg-muted/20 p-4" aria-labelledby="agent-follow-up-title" data-testid="section-agent-follow-up">
+          <div className="flex items-start gap-3">
+            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <h3 id="agent-follow-up-title" className="text-sm font-semibold">Continue with a bounded check</h3>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">The deterministic report remains authoritative. Any follow-up action is proposed separately and requires your approval before it can run.</p>
+            </div>
+          </div>
+          {!approvalRequest ? (
+            <button type="button" onClick={onContinue} disabled={approvalPending}
+              data-testid="button-continue-agent-analysis"
+              className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
+              {approvalPending ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : <ShieldCheck className="size-4" aria-hidden="true" />}
+              {approvalPending ? 'Preparing proposal' : 'Continue analysis'}
+            </button>
+          ) : (
+            <div className="mt-4 rounded-md border border-border bg-background p-4" role="dialog" aria-labelledby="agent-approval-title" data-testid="agent-approval-request">
+              <h4 id="agent-approval-title" className="text-sm font-semibold">Approval required</h4>
+              <dl className="mt-3 space-y-2 text-sm">
+                <div><dt className="font-medium">Purpose</dt><dd className="text-muted-foreground">{proposalPurpose}</dd></div>
+                <div><dt className="font-medium">Action</dt><dd className="text-muted-foreground">{proposalAction}</dd></div>
+                <div><dt className="font-medium">Target</dt><dd className="text-muted-foreground">{proposalTarget}</dd></div>
+                <div><dt className="font-medium">Requested fields</dt><dd className="text-muted-foreground">{proposalFields.length ? proposalFields.map(String).join(', ') : 'No additional fields'}</dd></div>
+              </dl>
+              <p className="mt-3 text-xs leading-5 text-muted-foreground">Approval applies only to this request. A redacted excerpt may be sent only when shown above; credentials and raw message or page content are never requested.</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button type="button" onClick={() => onResolveApproval('approve')} disabled={approvalPending}
+                  data-testid="button-approve-agent-request"
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">Approve</button>
+                <button type="button" onClick={() => onResolveApproval('decline')} disabled={approvalPending}
+                  data-testid="button-decline-agent-request"
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-input bg-background px-4 text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">Decline</button>
+                <button type="button" onClick={onCancelApproval} disabled={approvalPending}
+                  data-testid="button-cancel-agent-request"
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-input bg-background px-4 text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">Cancel</button>
+              </div>
+            </div>
+          )}
+          {approvalError && <p className="mt-3 text-sm text-destructive" role="status" data-testid="status-agent-approval-error">{approvalError}</p>}
+        </section>
 
         {report.explanationToken && (
           <section className="mt-6 rounded-lg border border-border bg-muted/20 p-4" aria-labelledby="explanation-title" data-testid="section-ai-explanation">

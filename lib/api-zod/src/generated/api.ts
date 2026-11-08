@@ -215,6 +215,27 @@ export const ResolveAgentApprovalResponse = zod.object({
 
 
 /**
+ * Requires a completed deterministic scan. The response is a pending proposal; no tool is dispatched.
+ * @summary Request one approval-gated follow-up proposal
+ */
+export const CreateAgentProposalParams = zod.object({
+  "scanId": zod.uuid()
+})
+
+export const CreateAgentProposalBody = zod.object({
+  "scanType": zod.enum(['url', 'email', 'email_link'])
+})
+
+export const CreateAgentProposalResponse = zod.object({
+  "requestId": zod.uuid(),
+  "scanId": zod.uuid(),
+  "proposal": zod.record(zod.string(), zod.unknown()),
+  "status": zod.enum(['pending']),
+  "expiresAt": zod.coerce.date()
+})
+
+
+/**
  * Cancels pending approval prompts for this browser-bound scan.
  * @summary Cancel pending agent approval requests
  */

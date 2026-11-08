@@ -104,6 +104,36 @@ export interface AgentApprovalDecisionInput {
   decision: AgentApprovalDecisionInputDecision;
 }
 
+export type AgentProposalTriggerInputScanType = typeof AgentProposalTriggerInputScanType[keyof typeof AgentProposalTriggerInputScanType];
+
+
+export const AgentProposalTriggerInputScanType = {
+  url: 'url',
+  email: 'email',
+  email_link: 'email_link',
+} as const;
+
+export interface AgentProposalTriggerInput {
+  scanType: AgentProposalTriggerInputScanType;
+}
+
+export type AgentApprovalRequestProposal = { [key: string]: unknown };
+
+export type AgentApprovalRequestStatus = typeof AgentApprovalRequestStatus[keyof typeof AgentApprovalRequestStatus];
+
+
+export const AgentApprovalRequestStatus = {
+  pending: 'pending',
+} as const;
+
+export interface AgentApprovalRequest {
+  requestId: string;
+  scanId: string;
+  proposal: AgentApprovalRequestProposal;
+  status: AgentApprovalRequestStatus;
+  expiresAt: string;
+}
+
 export type AgentApprovalResponseStatus = typeof AgentApprovalResponseStatus[keyof typeof AgentApprovalResponseStatus];
 
 

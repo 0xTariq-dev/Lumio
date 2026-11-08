@@ -8,9 +8,14 @@
 
 export * from './agentApprovalDecisionInput';
 export * from './agentApprovalDecisionInputDecision';
+export * from './agentApprovalRequest';
+export * from './agentApprovalRequestProposal';
+export * from './agentApprovalRequestStatus';
 export * from './agentApprovalResponse';
 export * from './agentApprovalResponseStatus';
 export * from './agentCancellationResponse';
+export * from './agentProposalTriggerInput';
+export * from './agentProposalTriggerInputScanType';
 export * from './analysisStatus';
 export * from './analysisStatusWorkerStatus';
 export * from './apiError';

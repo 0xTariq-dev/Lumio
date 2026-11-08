@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { validateAgentProposal } from "./agent-orchestration.ts";
+import { createLocalAgentProposal, validateAgentProposal } from "./agent-orchestration.ts";
 import { AgentApprovalStore } from "./agent-approval.ts";
-import { createLocalAgentProposal } from "./agent-proposal.ts";
 
 const urlContext = {
   scanType: "url",

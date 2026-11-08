@@ -362,6 +362,50 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /scans/{scanId}/agent/proposals:
+    post:
+      operationId: createAgentProposal
+      tags: [analyzer]
+      summary: Request one approval-gated follow-up proposal
+      description: Requires a completed deterministic scan. The response is a pending proposal; no tool is dispatched.
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentProposalTriggerInput"
+      responses:
+        "202":
+          description: Approval-gated proposal created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentApprovalRequest"
+        "400":
+          description: Invalid scan type or reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Scan is not complete or no proposal is available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Scan status is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /scans/{scanId}/agent/cancel:
     post:
       operationId: cancelAgentApprovals
@@ -535,6 +579,33 @@ components:
         decision:
           type: string
           enum: [approve, decline]
+    AgentProposalTriggerInput:
+      type: object
+      required: [scanType]
+      additionalProperties: false
+      properties:
+        scanType:
+          type: string
+          enum: [url, email, email_link]
+    AgentApprovalRequest:
+      type: object
+      required: [requestId, scanId, proposal, status, expiresAt]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        scanId:
+          type: string
+          format: uuid
+        proposal:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+          enum: [pending]
+        expiresAt:
+          type: string
+          format: date-time
     AgentApprovalResponse:
       type: object
       required: [requestId, scanId, status]
