@@ -11,6 +11,9 @@ const WorkerHealthSchema = z.object({
     active: z.number().int().min(0),
     queued: z.number().int().min(0),
   }),
+  capabilities: z.object({
+    consentedAttachmentParsing: z.boolean(),
+  }).optional(),
 });
 
 const WorkerAcceptedSchema = z.object({
@@ -78,7 +81,7 @@ export const ReviewReadyEventSchema = z.object({
   linkCount: z.number().int().min(0).max(50),
 }).strict();
 
-const WorkerReportSchema = z.object({
+export const WorkerReportSchema = z.object({
   scanId: z.uuid(),
   type: z.enum(["url", "email", "email_link"]),
   riskBand: z.enum(["low", "moderate", "high", "critical", "inconclusive"]),
@@ -125,6 +128,11 @@ const WorkerReportSchema = z.object({
     targetHost: z.string().max(253),
     scanAvailable: z.boolean(),
   })).max(50).optional(),
+  attachmentDocuments: z.array(z.string().max(10_000)).max(20).optional()
+    .refine(
+      (documents) => !documents || documents.reduce((total, document) => total + document.length, 0) <= 20_000,
+      "Extracted document text exceeds its aggregate limit",
+    ),
 });
 
 export type WorkerReport = z.infer<typeof WorkerReportSchema>;
@@ -171,6 +179,7 @@ export type WorkerScanInput =
       type: "email";
       emailBase64: string;
       consent: true;
+      parseAttachmentsWithAi?: boolean;
       agentReview?: boolean;
     }
   | {
@@ -183,7 +192,13 @@ export type WorkerScanInput =
 
 export type WorkerScanPayload =
   | { type: "url"; url: string; consent: true; agentReview?: boolean }
-  | { type: "email"; emailBase64: string; consent: true; agentReview?: boolean }
+  | {
+      type: "email";
+      emailBase64: string;
+      consent: true;
+      parseAttachmentsWithAi?: boolean;
+      agentReview?: boolean;
+    }
   | {
       type: "email_link";
       originalScanId: string;
@@ -422,7 +437,12 @@ export async function fetchWorkerReview(
     if (!response.ok) return { kind: "unavailable" };
     const parsed = WorkerReviewSchema.safeParse(await response.json());
     if (!parsed.success || parsed.data.scanId !== scanId) return { kind: "unavailable" };
-    return { kind: "found", review: parsed.data };
+    const { attachmentDocuments: _privateDocuments, ...publicReviewReport } =
+      parsed.data.report;
+    return {
+      kind: "found",
+      review: { ...parsed.data, report: publicReviewReport },
+    };
   } catch {
     return { kind: "unavailable" };
   }

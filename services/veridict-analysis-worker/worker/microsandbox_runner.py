@@ -200,6 +200,7 @@ class MicrosandboxRunner:
         script_path = "/opt/veridict/guest/scan_url.py"
         if is_email:
             job_data["emailBase64"] = request.emailBase64
+            job_data["parseAttachmentsWithAi"] = request.parseAttachmentsWithAi
             script_path = "/opt/veridict/guest/scan_email.py"
         else:
             job_data["url"] = request.url

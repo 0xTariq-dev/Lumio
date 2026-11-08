@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from worker.app import create_app
-from worker.contracts import EmailScanRequest, URLScanRequest
+from worker.contracts import EmailScanRequest, ScanReport, URLScanRequest
 from worker.settings import WorkerSettings
 
 
@@ -208,6 +208,35 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
         self.analyzer = FakeAnalyzer()
         self.app = create_app(self.settings, self.analyzer)
 
+    async def test_internal_attachment_document_report_field_is_bounded(self):
+        report = ScanReport.model_validate(
+            {
+                "scanId": str(uuid4()),
+                "type": "email",
+                "riskBand": "inconclusive",
+                "completedAt": datetime.now(timezone.utc),
+                "ruleSetVersion": "test-email-rules",
+                "findings": [],
+                "coverage": {"sufficient": False, "checks": []},
+                "attachmentDocuments": ["private extracted text"],
+            }
+        )
+        self.assertEqual(report.attachmentDocuments, ["private extracted text"])
+
+        with self.assertRaises(ValueError):
+            ScanReport.model_validate(
+                {
+                    "scanId": str(uuid4()),
+                    "type": "email",
+                    "riskBand": "inconclusive",
+                    "completedAt": datetime.now(timezone.utc),
+                    "ruleSetVersion": "test-email-rules",
+                    "findings": [],
+                    "coverage": {"sufficient": False, "checks": []},
+                    "attachmentDocuments": ["a" * 10_000, "b" * 10_000, "c"],
+                }
+            )
+
     async def test_authentication_and_safe_request_id(self):
         async with self.app.router.lifespan_context(self.app):
             status, headers, body = await asgi_request(
@@ -242,6 +271,7 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(status, 200)
             self.assertEqual(json.loads(body)["accepted"], True)
             await self.analyzer.started.wait()
+            self.assertFalse(self.analyzer.last_request.parseAttachmentsWithAi)
             _, _, event_body = await asgi_request(
                 self.app,
                 "GET",
@@ -518,6 +548,9 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(health_status, 200)
             self.assertEqual(json.loads(health_body)["status"], "ready")
+            self.assertTrue(
+                json.loads(health_body)["capabilities"]["consentedAttachmentParsing"]
+            )
 
     async def _assert_email_scan_failure_cleanup(self, failure):
         self.analyzer.fail_next = failure

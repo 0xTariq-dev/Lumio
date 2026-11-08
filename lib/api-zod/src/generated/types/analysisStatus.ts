@@ -13,6 +13,8 @@ import type { ScanQuotaStatus } from './scanQuotaStatus';
 export interface AnalysisStatus {
   workerStatus: AnalysisStatusWorkerStatus;
   scannerAvailable: boolean;
+  /** Whether the connected isolated worker supports consent-gated document extraction. */
+  documentParsingAvailable: boolean;
   queue: QueueStatus;
   limits: ScanLimits;
   scanQuota: ScanQuotaStatus;

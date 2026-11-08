@@ -214,6 +214,7 @@ class RunnerProtocolTests(unittest.IsolatedAsyncioTestCase):
             type="email",
             emailBase64=b64encode(b"From: sender@example.com\r\n\r\nbody").decode(),
             consent=True,
+            parseAttachmentsWithAi=True,
         )
 
         async def progress(_stage, _reason_code=None):
@@ -233,6 +234,7 @@ class RunnerProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args, ["/opt/veridict/guest/scan_email.py"])
         self.assertEqual(job["type"], "email")
         self.assertEqual(job["emailBase64"], request.emailBase64)
+        self.assertTrue(job["parseAttachmentsWithAi"])
         self.assertNotIn("url", job)
         network = create.await_args.kwargs["network"]
         self.assertEqual(network.policy.default_egress, Action.DENY)

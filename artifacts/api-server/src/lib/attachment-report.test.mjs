@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { safeAttachmentFindingCopy } from "./attachment-report.ts";
+import {
+  omitAttachmentDocuments,
+  safeAttachmentFindingCopy,
+} from "./attachment-report.ts";
 
 test("attachment signature copies are fixed, bounded, and caveated", () => {
   const pdf = safeAttachmentFindingCopy("attachment-signature-pdf");
@@ -9,15 +12,26 @@ test("attachment signature copies are fixed, bounded, and caveated", () => {
   const ole = safeAttachmentFindingCopy("attachment-signature-ole");
   const mz = safeAttachmentFindingCopy("attachment-signature-mz");
 
-  assert.match(pdf.explanation, /first 16 attachment bytes/);
-  assert.match(zip.explanation, /not decompressed/);
-  assert.match(ole.explanation, /not parsed/);
+  assert.match(pdf.explanation, /first 16 bytes/);
+  assert.match(zip.explanation, /does not inspect archive contents/);
+  assert.match(ole.explanation, /does not inspect document contents/);
   assert.match(mz.title, /MZ executable-like marker/);
   assert.match(mz.explanation, /does not confirm a valid PE file/);
   for (const finding of [pdf, zip, ole, mz]) {
     assert.equal(finding.severity, "informational");
     assert.equal(finding.id.includes("undefined"), false);
   }
+});
+
+test("private extracted attachment text is omitted from public reports", () => {
+  const report = omitAttachmentDocuments({
+    scanId: "scan-id",
+    attachmentDocuments: ["private document text"],
+    documentSummary: "safe summary",
+  });
+
+  assert.deepEqual(report, { scanId: "scan-id", documentSummary: "safe summary" });
+  assert.equal("attachmentDocuments" in report, false);
 });
 
 test("signature mismatch copy does not expose submitted names or MIME values", () => {

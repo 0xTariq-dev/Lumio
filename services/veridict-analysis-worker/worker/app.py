@@ -179,6 +179,9 @@ def create_app(
                 "active": manager.active_count,
                 "queued": manager.queued_count,
             },
+            "capabilities": {
+                "consentedAttachmentParsing": True,
+            },
         }
 
     @app.post("/v1/scans")

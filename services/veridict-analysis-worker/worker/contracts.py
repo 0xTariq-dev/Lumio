@@ -3,14 +3,22 @@ from __future__ import annotations
 import base64
 import binascii
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 MAX_EMAIL_BYTES = 10 * 1024 * 1024
 MAX_EMAIL_BASE64_CHARS = ((MAX_EMAIL_BYTES + 2) // 3) * 4
+MAX_ATTACHMENT_DOCUMENTS = 20
+MAX_ATTACHMENT_DOCUMENT_CHARS = 10_000
+MAX_ATTACHMENT_DOCUMENT_TOTAL_CHARS = 20_000
+
+AttachmentDocumentText = Annotated[
+    str,
+    Field(max_length=MAX_ATTACHMENT_DOCUMENT_CHARS),
+]
 
 
 class URLScanRequest(BaseModel):
@@ -34,6 +42,7 @@ class EmailScanRequest(BaseModel):
     type: Literal["email"]
     emailBase64: str = Field(min_length=4, max_length=MAX_EMAIL_BASE64_CHARS)
     consent: Literal[True]
+    parseAttachmentsWithAi: bool = False
     agentReview: bool = False
 
     @field_validator("emailBase64")
@@ -247,9 +256,20 @@ class ScanReport(BaseModel):
         default=None, min_length=4, max_length=6
     )
     links: list[EmailLink] | None = Field(default=None, max_length=50)
+    attachmentDocuments: list[AttachmentDocumentText] | None = Field(
+        default=None,
+        max_length=MAX_ATTACHMENT_DOCUMENTS,
+    )
     agentActions: list[AgentActionResult] | None = Field(
         default=None, max_length=MAX_AGENT_ACTIONS
     )
+
+    @model_validator(mode="after")
+    def validate_attachment_document_total(self) -> "ScanReport":
+        documents = self.attachmentDocuments or []
+        if sum(len(document) for document in documents) > MAX_ATTACHMENT_DOCUMENT_TOTAL_CHARS:
+            raise ValueError("Extracted attachment text exceeds its aggregate limit")
+        return self
 
 
 class ScanSnapshot(BaseModel):

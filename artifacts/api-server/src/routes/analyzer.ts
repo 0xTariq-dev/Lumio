@@ -14,7 +14,10 @@ import {
   GetScanParams,
 } from "@workspace/api-zod";
 import { z } from "zod";
-import { safeAttachmentFindingCopy } from "../lib/attachment-report";
+import {
+  omitAttachmentDocuments,
+  safeAttachmentFindingCopy,
+} from "../lib/attachment-report";
 import {
   AgentActionResultSchema,
   ReviewReadyEventSchema,
@@ -24,7 +27,9 @@ import {
   getAnalysisWorkerHealth,
   openWorkerScanEvents,
   postWorkerScan,
+  WorkerReportSchema,
   type WorkerHealth,
+  type WorkerReport,
   type WorkerScanPayload,
 } from "../lib/analysis-worker";
 import { agentReviewRegistry } from "../lib/agent-review";
@@ -48,7 +53,11 @@ import {
   type QuotaReservationEntry,
 } from "../lib/scan-quotas";
 import { logger } from "../lib/logger";
-import { createExplanationToken } from "../lib/serverless-inference";
+import {
+  createExplanationToken,
+  getVultrInferenceConfig,
+  summarizeVultrDocuments,
+} from "../lib/serverless-inference";
 
 const router: IRouter = Router();
 const MAX_EMAIL_BYTES = 10 * 1024 * 1024;
@@ -172,19 +181,111 @@ const ScanReportSchema = z.object({
     )
     .max(50)
     .optional(),
+  documentSummaryStatus: z.enum([
+    "completed",
+    "unavailable",
+    "no_supported_documents",
+  ]).optional(),
+  documentSummary: z.string().max(1_200).optional(),
   agentActions: z.array(AgentActionResultSchema).max(3).optional(),
   explanationToken: z.string().max(12_000).optional(),
 });
 
 type ScanReportPayload = z.infer<typeof ScanReportSchema>;
+type DocumentSummaryFields = Pick<
+  ScanReportPayload,
+  "documentSummaryStatus" | "documentSummary"
+>;
+
+const DOCUMENT_SUMMARY_CACHE_LIMIT = 100;
+const DOCUMENT_SUMMARY_CACHE_TTL_MS = 15 * 60 * 1000;
+const documentSummaryCache = new Map<
+  string,
+  { expiresAt: number; value: DocumentSummaryFields }
+>();
+const documentSummaryInFlight = new Map<
+  string,
+  Promise<DocumentSummaryFields>
+>();
+
+async function getDocumentSummary(
+  report: WorkerReport,
+): Promise<DocumentSummaryFields | undefined> {
+  const documents = report.type === "email" ? report.attachmentDocuments : undefined;
+  if (documents === undefined) return undefined;
+
+  const cached = documentSummaryCache.get(report.scanId);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (cached) documentSummaryCache.delete(report.scanId);
+
+  const pending = documentSummaryInFlight.get(report.scanId);
+  if (pending) return pending;
+
+  const task = (async (): Promise<DocumentSummaryFields> => {
+    if (documents.length === 0) {
+      return { documentSummaryStatus: "no_supported_documents" };
+    }
+    const config = getVultrInferenceConfig();
+    if (!config) {
+      logger.warn(
+        { scanId: report.scanId, errorType: "inference_not_configured" },
+        "Consent-gated document summary is unavailable",
+      );
+      return { documentSummaryStatus: "unavailable" };
+    }
+    try {
+      const documentSummary = await summarizeVultrDocuments(config, documents, {
+        signal: AbortSignal.timeout(12_000),
+      });
+      return documentSummary
+        ? { documentSummaryStatus: "completed", documentSummary }
+        : { documentSummaryStatus: "unavailable" };
+    } catch (error) {
+      logger.warn(
+        {
+          scanId: report.scanId,
+          errorType: error instanceof Error ? error.name : "unknown",
+        },
+        "Consent-gated document summary is unavailable",
+      );
+      return { documentSummaryStatus: "unavailable" };
+    }
+  })();
+  documentSummaryInFlight.set(report.scanId, task);
+
+  try {
+    const value = await task;
+    const now = Date.now();
+    for (const [scanId, entry] of documentSummaryCache) {
+      if (entry.expiresAt <= now) documentSummaryCache.delete(scanId);
+    }
+    while (documentSummaryCache.size >= DOCUMENT_SUMMARY_CACHE_LIMIT) {
+      const oldest = documentSummaryCache.keys().next().value;
+      if (!oldest) break;
+      documentSummaryCache.delete(oldest);
+    }
+    documentSummaryCache.set(report.scanId, {
+      expiresAt: now + DOCUMENT_SUMMARY_CACHE_TTL_MS,
+      value,
+    });
+    return value;
+  } finally {
+    documentSummaryInFlight.delete(report.scanId);
+  }
+}
+
+async function publicWorkerReport(report: WorkerReport): Promise<ScanReportPayload> {
+  const summary = await getDocumentSummary(report);
+  return ScanReportSchema.parse(sanitizeEmailReport(report, summary));
+}
 
 const uploadEml = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: MAX_EMAIL_BYTES,
     files: 1,
-    fields: 2,
-    parts: 3,
+    fields: 3,
+    parts: 4,
     fieldNameSize: 40,
     fieldSize: 8,
   },
@@ -493,6 +594,7 @@ router.get("/analysis/status", async (req, res) => {
     scannerAvailable: Boolean(
       worker && !queueIsFull(worker),
     ),
+    documentParsingAvailable: worker?.capabilities?.consentedAttachmentParsing === true,
     queue: {
       active: worker?.queue.active ?? 0,
       queued: worker?.queue.queued ?? 0,
@@ -627,12 +729,40 @@ router.post(
       );
     }
 
+    const parseAttachmentsWithAiRaw = req.body.parseAttachmentsWithAi;
+    if (
+      parseAttachmentsWithAiRaw !== undefined &&
+      parseAttachmentsWithAiRaw !== "true" &&
+      parseAttachmentsWithAiRaw !== "false"
+    ) {
+      return sendApiError(
+        res,
+        400,
+        "INVALID_EMAIL_FILE",
+        "Choose an .eml file and confirm consent.",
+      );
+    }
+    const parseAttachmentsWithAi = parseAttachmentsWithAiRaw === "true";
+    const worker = res.locals.workerHealth as WorkerHealth | undefined;
+    if (
+      parseAttachmentsWithAi &&
+      worker?.capabilities?.consentedAttachmentParsing !== true
+    ) {
+      return sendApiError(
+        res,
+        503,
+        "DOCUMENT_PARSING_UNAVAILABLE",
+        "Document parsing is not available on the isolated worker yet. You can still scan this email without it.",
+        true,
+      );
+    }
     const bytes = Uint8Array.from(file.buffer);
     const parsed = CreateEmailScanBody.safeParse({
       file: new Blob([bytes.buffer as ArrayBuffer], {
         type: "message/rfc822",
       }),
       consent: req.body.consent === "true",
+      parseAttachmentsWithAi,
     });
     if (!parsed.success) {
       return sendApiError(
@@ -650,6 +780,7 @@ router.post(
         type: "email",
         emailBase64: file.buffer.toString("base64"),
         consent: true,
+        ...(parseAttachmentsWithAi ? { parseAttachmentsWithAi: true } : {}),
         agentReview: req.body.agentReview === "true",
       },
       CreateEmailScanResponse,
@@ -732,7 +863,7 @@ router.get("/scans/:scanId/report", async (req, res) => {
   if (result.report.scanId !== params.data.scanId) {
     return sendApiError(res, 502, "INVALID_WORKER_RESPONSE", "The scan report could not be verified.");
   }
-  const safeReport = sanitizeEmailReport(result.report);
+  const safeReport = await publicWorkerReport(result.report);
   const browserToken = getOrCreateBrowserToken(req, res);
   return res.json({
     ...safeReport,
@@ -770,11 +901,11 @@ router.post(
   },
 );
 
-function parseEventBlock(
+async function parseEventBlock(
   block: string,
   expectedScanId: string,
   browserToken: string,
-): { id?: string; event: string; data: unknown } | undefined {
+): Promise<{ id?: string; event: string; data: unknown } | undefined> {
   let eventName = "message";
   let eventId: string | undefined;
   const dataLines: string[] = [];
@@ -817,11 +948,11 @@ function parseEventBlock(
     });
   }
   if (eventName === "completed") {
-    const report = ScanReportSchema.parse(data);
+    const report = WorkerReportSchema.parse(data);
     if (report.scanId !== expectedScanId) {
       throw new Error("Worker event scan reference mismatch");
     }
-    const safeReport = sanitizeEmailReport(report);
+    const safeReport = await publicWorkerReport(report);
     return withId("completed", {
       ...safeReport,
       explanationToken: createExplanationToken(safeReport, browserToken),
@@ -849,11 +980,18 @@ function parseEventBlock(
   return undefined;
 }
 
-function sanitizeEmailReport(report: ScanReportPayload): ScanReportPayload {
-  if (report.type !== "email") return report;
+function sanitizeEmailReport(
+  report: WorkerReport,
+  documentSummary?: DocumentSummaryFields,
+): ScanReportPayload {
+  const publicReport = {
+    ...omitAttachmentDocuments(report),
+    ...(documentSummary ?? {}),
+  };
+  if (report.type !== "email") return publicReport;
   return {
-    ...report,
-    findings: report.findings.map((finding) => {
+    ...publicReport,
+    findings: publicReport.findings.map((finding) => {
       if (finding.source === "email_body") {
         return {
           ...finding,
@@ -876,13 +1014,13 @@ function sanitizeEmailReport(report: ScanReportPayload): ScanReportPayload {
       return finding;
     }),
     coverage: {
-      ...report.coverage,
-      checks: report.coverage.checks.map((check) => ({
+      ...publicReport.coverage,
+      checks: publicReport.coverage.checks.map((check) => ({
         ...check,
         reason: null,
       })),
     },
-    links: report.links?.map((link, index) => ({
+    links: publicReport.links?.map((link, index) => ({
       ...link,
       anchorText: `Email link ${index + 1}`,
     })),
@@ -960,7 +1098,7 @@ router.get("/scans/:scanId/events", async (req, res) => {
       while (boundary >= 0) {
         const block = buffer.slice(0, boundary);
         buffer = buffer.slice(boundary + 2);
-        const event = parseEventBlock(block, params.data.scanId, browserToken);
+        const event = await parseEventBlock(block, params.data.scanId, browserToken);
         if (event) {
           res.write(serializePublicSseEvent(event));
           if (isTerminalAnalysisEvent(event.event)) {

@@ -17,6 +17,7 @@ The worker's direct packages use these declared licenses:
 | Playwright | Apache-2.0 |
 | Patchright | Apache-2.0 |
 | BrowserForge | Apache-2.0 |
+| pypdf 7.0.0 | BSD-3-Clause |
 
 ## rea-agents 6.8.0
 

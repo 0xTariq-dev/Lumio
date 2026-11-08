@@ -1,13 +1,28 @@
 import base64
+import io
 import json
 import unittest
+import zipfile
 from email.message import Message
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from guest.scan_email import _attachment_header_prefix, analyze_email
+from guest.scan_email import (
+    MAX_DOCUMENT_ATTACHMENT_BYTES,
+    MAX_DOCUMENT_TEXT_CHARS,
+    MAX_DOCUMENT_TEXT_TOTAL_CHARS,
+    MAX_DOCX_DOCUMENT_XML_BYTES,
+    MAX_PDF_PAGES,
+    _attachment_header_prefix,
+    _extract_pdf_text,
+    analyze_email,
+)
 
 
 def _scan_email_with_attachments(
     attachments: list[tuple[str, str, bytes]],
+    *,
+    parse_attachments: bool = False,
 ) -> dict:
     boundary = b"signature-boundary"
     raw_email = bytearray(
@@ -34,8 +49,59 @@ def _scan_email_with_attachments(
             "type": "email",
             "taskPlan": ["email_headers", "email_body", "email_links", "report"],
             "emailBase64": base64.b64encode(raw_email).decode("ascii"),
+            "parseAttachmentsWithAi": parse_attachments,
         }
     )
+
+
+def _pdf_with_text(text: str) -> bytes:
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("ascii")
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
+        ),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n"
+        + stream
+        + b"\nendstream",
+    ]
+    output = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(len(output))
+        output.extend(f"{index} 0 obj\n".encode("ascii"))
+        output.extend(obj)
+        output.extend(b"\nendobj\n")
+    xref_offset = len(output)
+    output.extend(f"xref\n0 {len(offsets)}\n".encode("ascii"))
+    output.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        output.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    output.extend(
+        f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\n"
+        f"startxref\n{xref_offset}\n%%EOF\n".encode("ascii")
+    )
+    return bytes(output)
+
+
+def _docx_with_text(text: str) -> bytes:
+    xml = (
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>"
+    ).encode("utf-8")
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", xml)
+        archive.writestr(
+            "word/header1.xml",
+            '<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            "<w:p><w:r><w:t>header text excluded</w:t></w:r></w:p></w:hdr>",
+        )
+        archive.writestr("docProps/core.xml", "metadata text excluded")
+    return output.getvalue()
 
 
 class GuestEmailTests(unittest.TestCase):
@@ -202,6 +268,105 @@ class GuestEmailTests(unittest.TestCase):
 
         self.assertEqual(signature_check["status"], "skipped")
         self.assertIn("MIME part limit", signature_check["reason"])
+
+    def test_attachment_document_parsing_is_disabled_without_explicit_consent(self):
+        secret_text = "consent-gated private document text"
+        report = _scan_email_with_attachments(
+            [("notes.txt", "text/plain", secret_text.encode())]
+        )
+
+        self.assertNotIn("attachmentDocuments", report)
+        self.assertNotIn(secret_text, json.dumps(report["findings"]))
+
+    def test_extracts_text_from_txt_pdf_and_only_docx_document_xml(self):
+        txt = b"Text document content"
+        pdf = _pdf_with_text("PDF document content")
+        docx = _docx_with_text("DOCX document content")
+        class FakePdfPage:
+            def extract_text(self):
+                return "PDF document content"
+
+        class FakePdfReader:
+            def __init__(self, _stream, *, strict=False):
+                self.is_encrypted = False
+                self.pages = [FakePdfPage()]
+
+        with patch.dict(
+            "sys.modules",
+            {"pypdf": SimpleNamespace(PdfReader=FakePdfReader)},
+        ):
+            report = _scan_email_with_attachments(
+                [
+                    ("notes.txt", "text/plain; charset=utf-8", txt),
+                    ("report.pdf", "application/pdf", pdf),
+                    ("letter.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", docx),
+                ],
+                parse_attachments=True,
+            )
+
+        documents = report["attachmentDocuments"]
+        self.assertEqual(len(documents), 3)
+        combined_text = "\n".join(documents)
+        self.assertIn("Text document content", combined_text)
+        self.assertIn("PDF document content", combined_text)
+        self.assertIn("DOCX document content", combined_text)
+        self.assertNotIn("word/document.xml", combined_text)
+        self.assertNotIn("report.pdf", combined_text)
+        self.assertNotIn("header text excluded", combined_text)
+        self.assertNotIn("metadata text excluded", combined_text)
+
+    def test_unsupported_and_malformed_documents_are_ignored(self):
+        oversized_docx = io.BytesIO()
+        with zipfile.ZipFile(oversized_docx, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                "word/document.xml",
+                b"x" * (MAX_DOCX_DOCUMENT_XML_BYTES + 1),
+            )
+        report = _scan_email_with_attachments(
+            [
+                ("sheet.xlsx", "application/octet-stream", b"not parsed"),
+                ("bad.pdf", "application/pdf", b"not a pdf"),
+                ("bad.docx", "application/octet-stream", b"not a zip"),
+                ("large.docx", "application/octet-stream", oversized_docx.getvalue()),
+            ],
+            parse_attachments=True,
+        )
+        self.assertEqual(report["attachmentDocuments"], [])
+
+    def test_attachment_size_and_aggregate_text_limits_are_enforced(self):
+        oversized = b"x" * (MAX_DOCUMENT_ATTACHMENT_BYTES + 1)
+        report = _scan_email_with_attachments(
+            [
+                ("too-large.txt", "text/plain", oversized),
+                ("first.txt", "text/plain", b"a" * (MAX_DOCUMENT_TEXT_CHARS + 100)),
+                ("second.txt", "text/plain", b"b" * (MAX_DOCUMENT_TEXT_CHARS + 100)),
+                ("third.txt", "text/plain", b"c" * (MAX_DOCUMENT_TEXT_CHARS + 100)),
+            ],
+            parse_attachments=True,
+        )
+
+        documents = report["attachmentDocuments"]
+        self.assertEqual(len(documents), 2)
+        self.assertTrue(all(len(document) <= MAX_DOCUMENT_TEXT_CHARS for document in documents))
+        self.assertLessEqual(sum(map(len, documents)), MAX_DOCUMENT_TEXT_TOTAL_CHARS)
+        self.assertNotIn("x" * 100, json.dumps(documents))
+
+    def test_pdf_page_limit_is_enforced(self):
+        pages = [
+            SimpleNamespace(extract_text=lambda index=index: f"page-{index}")
+            for index in range(MAX_PDF_PAGES + 1)
+        ]
+        fake_module = SimpleNamespace(
+            PdfReader=lambda *_args, **_kwargs: SimpleNamespace(
+                is_encrypted=False,
+                pages=pages,
+            )
+        )
+        with patch.dict("sys.modules", {"pypdf": fake_module}):
+            text = _extract_pdf_text(b"bounded")
+
+        self.assertIn(f"page-{MAX_PDF_PAGES - 1}", text)
+        self.assertNotIn(f"page-{MAX_PDF_PAGES}", text)
 
     def test_rejects_non_email_and_invalid_base64(self):
         with self.assertRaises(ValueError):

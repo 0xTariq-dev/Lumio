@@ -1,7 +1,7 @@
 - [Veridict worker isolation](veridict-worker-isolation.md) — Keep untrusted URL/email analysis off the public API host; use a separate worker and fresh sandbox per analysis.
 - [Veridict Coolify deployment](veridict-coolify-deployment.md) — Use Coolify for the Vultr deployment; keep cross-host worker networking explicit.
 - [Veridict hybrid stack](veridict-typescript-stack.md) — Keep React/Vite and the API in TypeScript; run URL/email analysis in a separate Python worker.
-- [Veridict report delivery](veridict-report-delivery.md) — Keep email content transient; use local HTML/PDF exports and consent-gated redacted model explanations.
+- [Veridict report delivery](veridict-report-delivery.md) — Keep email content transient; send extracted attachment text to Vultr only after separate per-email consent.
 - [Veridict local-only intelligence](veridict-local-only-intelligence.md) — Keep submitted URLs and emails out of third-party OSINT lookups in the MVP; retain provider research for later evaluation.
 - [Veridict agent workflow](veridict-agent-workflow.md) — Model proposals require per-request ReUI consent and API validation; deterministic evidence/risk and sandbox limits remain authoritative.
 - [Veridict abuse quotas](veridict-abuse-quotas.md) — Lifetime IP caps use HMAC counters plus a signed browser token, not raw IP logs or invasive fingerprinting.

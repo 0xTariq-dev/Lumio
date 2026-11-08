@@ -58,6 +58,8 @@ export interface ScanQuotaStatus {
 export interface AnalysisStatus {
   workerStatus: AnalysisStatusWorkerStatus;
   scannerAvailable: boolean;
+  /** Whether the connected isolated worker supports consent-gated document extraction. */
+  documentParsingAvailable: boolean;
   queue: QueueStatus;
   limits: ScanLimits;
   scanQuota: ScanQuotaStatus;
@@ -81,6 +83,8 @@ export interface EmailScanInput {
   consent: true;
   /** Opt in to an approval-gated follow-up review before the report is published. Every follow-up step still requires its own approval. */
   agentReview?: boolean;
+  /** Explicit per-email consent to extract supported PDF, DOCX, and TXT attachment text in the isolated worker and send only that extracted text to Vultr AI for a brief summary. Defaults to false. */
+  parseAttachmentsWithAi?: boolean;
 }
 
 export interface LinkScanConsent {
@@ -496,6 +500,18 @@ export const ScanReportRiskBand = {
   inconclusive: 'inconclusive',
 } as const;
 
+/**
+ * Status of the consented document-summary request. Omitted unless document parsing was explicitly requested.
+ */
+export type ScanReportDocumentSummaryStatus = typeof ScanReportDocumentSummaryStatus[keyof typeof ScanReportDocumentSummaryStatus];
+
+
+export const ScanReportDocumentSummaryStatus = {
+  completed: 'completed',
+  unavailable: 'unavailable',
+  no_supported_documents: 'no_supported_documents',
+} as const;
+
 export type SoftwareEvidenceProduct = typeof SoftwareEvidenceProduct[keyof typeof SoftwareEvidenceProduct];
 
 
@@ -597,6 +613,13 @@ export interface ScanReport {
   executionPlan?: ScanPlanStep[];
   /** @maxItems 50 */
   links?: EmailLink[];
+  /** Status of the consented document-summary request. Omitted unless document parsing was explicitly requested. */
+  documentSummaryStatus?: ScanReportDocumentSummaryStatus;
+  /**
+     * Brief AI summary of extracted supported attachment text. It does not affect the deterministic risk band.
+     * @maxLength 1200
+     */
+  documentSummary?: string;
   /**
      * Approval-gated follow-up steps. Shown separately; they never change the risk band.
      * @maxItems 3

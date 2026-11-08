@@ -33,6 +33,7 @@ export const getAnalysisStatusResponseScanQuotaLifetimeUsedMin = 0;
 export const GetAnalysisStatusResponse = zod.object({
   "workerStatus": zod.enum(['ready', 'unavailable']),
   "scannerAvailable": zod.boolean(),
+  "documentParsingAvailable": zod.boolean().describe('Whether the connected isolated worker supports consent-gated document extraction.'),
   "queue": zod.object({
   "active": zod.int().min(getAnalysisStatusResponseQueueActiveMin),
   "queued": zod.int().min(getAnalysisStatusResponseQueueQueuedMin),
@@ -91,7 +92,8 @@ export const CreateUrlScanResponse = zod.object({
 export const CreateEmailScanBody = zod.object({
   "file": zod.instanceof(Blob),
   "consent": zod.literal(true),
-  "agentReview": zod.boolean().optional().describe('Opt in to an approval-gated follow-up review before the report is published. Every follow-up step still requires its own approval.')
+  "agentReview": zod.boolean().optional().describe('Opt in to an approval-gated follow-up review before the report is published. Every follow-up step still requires its own approval.'),
+  "parseAttachmentsWithAi": zod.boolean().optional().describe('Explicit per-email consent to extract supported PDF, DOCX, and TXT attachment text in the isolated worker and send only that extracted text to Vultr AI for a brief summary. Defaults to false.')
 })
 
 export const CreateEmailScanResponse = zod.object({
@@ -192,6 +194,8 @@ export const getScanReportResponseLinksItemTargetHostMax = 253;
 
 export const getScanReportResponseLinksMax = 50;
 
+export const getScanReportResponseDocumentSummaryMax = 1200;
+
 export const getScanReportResponseAgentActionsItemTargetHostMax = 253;
 
 export const getScanReportResponseAgentActionsItemFindingsItemTitleMax = 100;
@@ -253,6 +257,8 @@ export const GetScanReportResponse = zod.object({
   "targetHost": zod.string().max(getScanReportResponseLinksItemTargetHostMax),
   "scanAvailable": zod.boolean()
 })).max(getScanReportResponseLinksMax).optional(),
+  "documentSummaryStatus": zod.enum(['completed', 'unavailable', 'no_supported_documents']).optional().describe('Status of the consented document-summary request. Omitted unless document parsing was explicitly requested.'),
+  "documentSummary": zod.string().max(getScanReportResponseDocumentSummaryMax).optional().describe('Brief AI summary of extracted supported attachment text. It does not affect the deterministic risk band.'),
   "agentActions": zod.array(zod.object({
   "actionId": zod.uuid(),
   "tool": zod.enum(['link_metadata_share', 'email_link_visit', 'url_browser_observation']),

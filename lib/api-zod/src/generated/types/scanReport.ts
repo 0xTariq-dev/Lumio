@@ -10,6 +10,7 @@ import type { EmailLink } from './emailLink';
 import type { ScanCoverage } from './scanCoverage';
 import type { ScanFinding } from './scanFinding';
 import type { ScanPlanStep } from './scanPlanStep';
+import type { ScanReportDocumentSummaryStatus } from './scanReportDocumentSummaryStatus';
 import type { ScanReportRiskBand } from './scanReportRiskBand';
 import type { ScanReportType } from './scanReportType';
 import type { SoftwareEvidence } from './softwareEvidence';
@@ -39,6 +40,13 @@ export interface ScanReport {
   executionPlan?: ScanPlanStep[];
   /** @maxItems 50 */
   links?: EmailLink[];
+  /** Status of the consented document-summary request. Omitted unless document parsing was explicitly requested. */
+  documentSummaryStatus?: ScanReportDocumentSummaryStatus;
+  /**
+     * Brief AI summary of extracted supported attachment text. It does not affect the deterministic risk band.
+     * @maxLength 1200
+     */
+  documentSummary?: string;
   /**
      * Approval-gated follow-up steps. Shown separately; they never change the risk band.
      * @maxItems 3

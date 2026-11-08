@@ -12,4 +12,6 @@ export interface EmailScanInput {
   consent: true;
   /** Opt in to an approval-gated follow-up review before the report is published. Every follow-up step still requires its own approval. */
   agentReview?: boolean;
+  /** Explicit per-email consent to extract supported PDF, DOCX, and TXT attachment text in the isolated worker and send only that extracted text to Vultr AI for a brief summary. Defaults to false. */
+  parseAttachmentsWithAi?: boolean;
 }

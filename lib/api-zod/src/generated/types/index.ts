@@ -56,6 +56,7 @@ export * from './scanProgressStage';
 export * from './scanQuotaStatus';
 export * from './scanQuotaWindow';
 export * from './scanReport';
+export * from './scanReportDocumentSummaryStatus';
 export * from './scanReportRiskBand';
 export * from './scanReportType';
 export * from './scanSnapshot';

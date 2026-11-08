@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import io
 import json
+import logging
+import quopri
 import re
 import sys
 from datetime import datetime, timezone
@@ -13,6 +16,8 @@ from html.parser import HTMLParser
 from pathlib import PurePosixPath
 from typing import Any
 from uuid import uuid4
+from xml.etree import ElementTree
+from zipfile import ZipFile
 
 from shared.url_policy import (
     URLPolicyError,
@@ -26,9 +31,19 @@ MAX_BODY_PART_BYTES = 2 * 1024 * 1024
 MAX_MIME_PARTS = 300
 MAX_ATTACHMENT_SIGNATURE_BYTES = 16
 MAX_ATTACHMENT_PREFIX_SCAN_CHARS = 512
+MAX_DOCUMENT_ATTACHMENT_BYTES = 2 * 1024 * 1024
+MAX_DOCUMENT_ENCODED_PAYLOAD_CHARS = MAX_DOCUMENT_ATTACHMENT_BYTES * 4
+MAX_DOCUMENT_TEXT_CHARS = 10_000
+MAX_DOCUMENT_TEXT_TOTAL_CHARS = 20_000
+MAX_DOCUMENTS = 20
+MAX_DOCX_DOCUMENT_XML_BYTES = 4 * 1024 * 1024
+MAX_PDF_PAGES = 20
 MAX_LINK_CANDIDATES = 250
 MAX_LINKS = 50
 EXPECTED_TASK_PLAN = ("email_headers", "email_body", "email_links", "report")
+DOCUMENT_EXTENSIONS = {".docx", ".pdf", ".txt"}
+WORD_DOCUMENT_XML = "word/document.xml"
+WORD_TEXT_TAG = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t"
 URL_PATTERN = re.compile(r"""https?://[^\s<>"']+""", re.IGNORECASE)
 AUTH_FAILURE_PATTERN = re.compile(
     r"\b(spf|dkim|dmarc)\s*=\s*(fail|softfail|permerror|temperror)\b",
@@ -256,7 +271,7 @@ def _attachment_signature_findings(
     signature_copy = {
         "pdf": (
             "PDF header marker detected",
-            "The first 16 attachment bytes matched a PDF header marker. The document was not parsed; this does not establish safety.",
+            "The first 16 attachment bytes matched a PDF header marker. This signature check does not inspect document text or establish safety.",
         ),
         "zip": (
             "ZIP container marker detected",
@@ -264,7 +279,7 @@ def _attachment_signature_findings(
         ),
         "ole": (
             "OLE document marker detected",
-            "The first 16 attachment bytes matched an OLE compound-document marker. The document was not parsed.",
+            "The first 16 attachment bytes matched an OLE compound-document marker. This signature check does not inspect document text.",
         ),
         "mz": (
             "MZ executable-like marker detected",
@@ -327,11 +342,15 @@ def _domain(value: str) -> str | None:
 
 def _message_parts(
     message: Any,
-) -> tuple[list[str], list[tuple[str, str, str | None]], bool, bool]:
+    *,
+    parse_attachments: bool = False,
+) -> tuple[list[str], list[tuple[str, str, str | None]], list[str], bool, bool]:
     body_texts: list[str] = []
     attachment_metadata: list[tuple[str, str, str | None]] = []
+    attachment_documents: list[str] = []
     body_truncated = False
     mime_parts_truncated = False
+    document_text_remaining = MAX_DOCUMENT_TEXT_TOTAL_CHARS
 
     for index, part in enumerate(message.walk()):
         if index >= MAX_MIME_PARTS:
@@ -347,6 +366,18 @@ def _message_parts(
             content_type = str(part.get_content_type()).lower()[:120]
             signature = _attachment_signature(_attachment_header_prefix(part))
             attachment_metadata.append((extension, content_type, signature))
+            if (
+                parse_attachments
+                and extension in DOCUMENT_EXTENSIONS
+                and len(attachment_documents) < MAX_DOCUMENTS
+                and document_text_remaining > 0
+            ):
+                text = _extract_document_text(part, extension)
+                if text:
+                    text = text[: min(MAX_DOCUMENT_TEXT_CHARS, document_text_remaining)]
+                    if text:
+                        attachment_documents.append(text)
+                        document_text_remaining -= len(text)
             continue
 
         if part.get_content_type() in {"text/plain", "text/html"}:
@@ -356,7 +387,119 @@ def _message_parts(
             elif part.get_payload() is not None:
                 body_truncated = True
 
-    return body_texts, attachment_metadata, body_truncated, mime_parts_truncated
+    return (
+        body_texts,
+        attachment_metadata,
+        attachment_documents,
+        body_truncated,
+        mime_parts_truncated,
+    )
+
+
+def _decoded_document_payload(part: Any) -> bytes | None:
+    """Decode one supported document payload only after checking its encoded bound."""
+    payload = part.get_payload()
+    if not isinstance(payload, str) or len(payload) > MAX_DOCUMENT_ENCODED_PAYLOAD_CHARS:
+        return None
+
+    transfer_encoding = str(part.get("Content-Transfer-Encoding") or "").strip().lower()
+    try:
+        if transfer_encoding == "base64":
+            compact = "".join(payload.split())
+            content = base64.b64decode(compact, validate=True)
+        elif transfer_encoding == "quoted-printable":
+            content = quopri.decodestring(payload.encode("ascii", errors="strict"))
+        elif transfer_encoding in {"", "7bit", "8bit", "binary"}:
+            content = payload.encode("ascii", errors="surrogateescape")
+        else:
+            return None
+    except (UnicodeEncodeError, binascii.Error, ValueError):
+        return None
+
+    if not content or len(content) > MAX_DOCUMENT_ATTACHMENT_BYTES:
+        return None
+    return content
+
+
+def _decode_document_text(content: bytes, charset: str | None) -> str:
+    try:
+        return content.decode(charset or "utf-8", errors="replace")
+    except LookupError:
+        return content.decode("utf-8", errors="replace")
+
+
+def _extract_txt_text(part: Any, content: bytes) -> str:
+    text = _decode_document_text(content, part.get_content_charset())
+    return text.strip()[:MAX_DOCUMENT_TEXT_CHARS]
+
+
+def _extract_pdf_text(content: bytes) -> str:
+    pdf_logger = logging.getLogger("pypdf")
+    previous_log_level = pdf_logger.level
+    pdf_logger.setLevel(logging.CRITICAL + 1)
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(content), strict=False)
+        if reader.is_encrypted:
+            return ""
+        page_count = min(len(reader.pages), MAX_PDF_PAGES)
+        pages: list[str] = []
+        remaining = MAX_DOCUMENT_TEXT_CHARS
+        for index in range(page_count):
+            try:
+                text = reader.pages[index].extract_text() or ""
+            except Exception:
+                continue
+            text = text.strip()
+            if text:
+                pages.append(text[:remaining])
+                remaining -= min(len(text), remaining)
+            if remaining <= 0:
+                break
+        return "\n".join(pages)[:MAX_DOCUMENT_TEXT_CHARS].strip()
+    except Exception:
+        return ""
+    finally:
+        pdf_logger.setLevel(previous_log_level)
+
+
+def _extract_docx_text(content: bytes) -> str:
+    try:
+        with ZipFile(io.BytesIO(content)) as archive:
+            info = archive.getinfo(WORD_DOCUMENT_XML)
+            if info.file_size > MAX_DOCX_DOCUMENT_XML_BYTES:
+                return ""
+            with archive.open(info) as document_xml:
+                xml_content = document_xml.read(MAX_DOCX_DOCUMENT_XML_BYTES + 1)
+            if len(xml_content) > MAX_DOCX_DOCUMENT_XML_BYTES:
+                return ""
+        # Reject DTD/entity declarations before handing the bounded XML to ElementTree.
+        xml_lower = xml_content.lower()
+        if b"\x00" in xml_content or b"<!doctype" in xml_lower or b"<!entity" in xml_lower:
+            return ""
+        root = ElementTree.fromstring(xml_content)
+        fragments = [
+            node.text
+            for node in root.iter(WORD_TEXT_TAG)
+            if isinstance(node.text, str) and node.text
+        ]
+        return " ".join(fragments).strip()[:MAX_DOCUMENT_TEXT_CHARS]
+    except Exception:
+        return ""
+
+
+def _extract_document_text(part: Any, extension: str) -> str:
+    content = _decoded_document_payload(part)
+    if content is None:
+        return ""
+    if extension == ".txt":
+        return _extract_txt_text(part, content)
+    if extension == ".pdf":
+        return _extract_pdf_text(content)
+    if extension == ".docx":
+        return _extract_docx_text(content)
+    return ""
 
 
 def _link_candidates(body_texts: list[str]) -> list[str]:
@@ -450,7 +593,16 @@ def analyze_email(job: dict[str, Any]) -> dict[str, Any]:
     if not message.keys():
         raise ValueError("The uploaded file is not a readable email")
 
-    body_texts, attachments, body_truncated, mime_parts_truncated = _message_parts(message)
+    (
+        body_texts,
+        attachments,
+        attachment_documents,
+        body_truncated,
+        mime_parts_truncated,
+    ) = _message_parts(
+        message,
+        parse_attachments=job.get("parseAttachmentsWithAi") is True,
+    )
     links, private_targets = _safe_links(_link_candidates(body_texts))
     findings: list[dict[str, Any]] = []
 
@@ -497,7 +649,7 @@ def analyze_email(job: dict[str, Any]) -> dict[str, Any]:
                 _finding(
                     "risky-attachment-type",
                     "Potentially risky attachment type",
-                    "Attachment metadata includes a file type that can contain or launch executable content. Only a bounded header prefix was checked; no content was parsed or executed.",
+                "Attachment metadata includes a file type that can contain or launch executable content. The baseline check inspected only a bounded header prefix; no attachment content was executed.",
                     "moderate",
                     "attachment_metadata",
                     strength="contextual",
@@ -507,7 +659,7 @@ def analyze_email(job: dict[str, Any]) -> dict[str, Any]:
             _finding(
                 "attachment-bounded-inspection",
                 "Attachment checks were bounded",
-                "Metadata was checked, and at most 16 header bytes were inspected for attachments within the MIME-part limit. Full contents were not parsed, decompressed, or executed.",
+            "The baseline check read metadata and at most 16 header bytes within the MIME-part limit. Supported document text is extracted only after separate consent; no attachment content is executed.",
                 "informational",
                 "attachment_metadata",
                 strength="direct",
@@ -557,6 +709,8 @@ def analyze_email(job: dict[str, Any]) -> dict[str, Any]:
         "links": links,
         "_privateLinks": private_targets,
     }
+    if job.get("parseAttachmentsWithAi") is True:
+        report["attachmentDocuments"] = attachment_documents
     return report
 
 

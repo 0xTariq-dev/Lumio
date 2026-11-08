@@ -577,13 +577,16 @@ components:
         - status
     AnalysisStatus:
       type: object
-      required: [workerStatus, scannerAvailable, queue, limits, scanQuota]
+      required: [workerStatus, scannerAvailable, documentParsingAvailable, queue, limits, scanQuota]
       properties:
         workerStatus:
           type: string
           enum: [ready, unavailable]
         scannerAvailable:
           type: boolean
+        documentParsingAvailable:
+          type: boolean
+          description: Whether the connected isolated worker supports consent-gated document extraction.
         queue:
           $ref: "#/components/schemas/QueueStatus"
         limits:
@@ -693,6 +696,9 @@ components:
         agentReview:
           type: boolean
           description: Opt in to an approval-gated follow-up review before the report is published. Every follow-up step still requires its own approval.
+        parseAttachmentsWithAi:
+          type: boolean
+          description: Explicit per-email consent to extract supported PDF, DOCX, and TXT attachment text in the isolated worker and send only that extracted text to Vultr AI for a brief summary. Defaults to false.
     LinkScanConsent:
       type: object
       required: [consent]
@@ -1023,6 +1029,14 @@ components:
           maxItems: 50
           items:
             $ref: "#/components/schemas/EmailLink"
+        documentSummaryStatus:
+          type: string
+          enum: [completed, unavailable, no_supported_documents]
+          description: Status of the consented document-summary request. Omitted unless document parsing was explicitly requested.
+        documentSummary:
+          type: string
+          maxLength: 1200
+          description: Brief AI summary of extracted supported attachment text. It does not affect the deterministic risk band.
         agentActions:
           type: array
           maxItems: 3

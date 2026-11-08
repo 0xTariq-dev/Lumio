@@ -381,6 +381,9 @@ formData.append(`consent`, emailScanInput.consent.toString())
 if(emailScanInput.agentReview !== undefined) {
  formData.append(`agentReview`, emailScanInput.agentReview.toString())
  }
+if(emailScanInput.parseAttachmentsWithAi !== undefined) {
+ formData.append(`parseAttachmentsWithAi`, emailScanInput.parseAttachmentsWithAi.toString())
+ }
 
   return customFetch<ScanAccepted>(getCreateEmailScanUrl(),
   {
