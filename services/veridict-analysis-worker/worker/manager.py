@@ -391,11 +391,13 @@ class ScanManager:
                         status_value = fallback_status
                     mapped_reason = None
                     if status_value == "failed":
-                        mapped_reason = (
-                            fallback_reason or "http_fetch_failed" if step_id == "http"
-                            else "browser_error" if step_id == "browser"
-                            else "analysis_failed"
-                        )
+                        mapped_reason = fallback_reason
+                        if mapped_reason is None:
+                            mapped_reason = (
+                                "http_fetch_failed" if step_id == "http"
+                                else "browser_error" if step_id == "browser"
+                                else "analysis_failed"
+                            )
                     elif status_value == "blocked":
                         mapped_reason = (
                             "redirect_blocked" if step_id in {"http", "browser"}
