@@ -308,6 +308,31 @@ export const StreamScanExplanationResponse = zod.unknown()
 
 
 /**
+ * Requires explicit speech consent and the short-lived explanation token
+ * for this scan and browser. Sends only bounded, sanitized summary text to
+ * Vultr. Audio is returned without caching and is not stored.
+ * @summary Generate on-demand speech for an optional report summary
+ */
+export const SpeakScanSummaryParams = zod.object({
+  "scanId": zod.uuid()
+})
+
+export const speakScanSummaryBodyExplanationTokenMax = 12000;
+
+export const speakScanSummaryBodySummaryMax = 1400;
+
+
+
+export const SpeakScanSummaryBody = zod.object({
+  "consent": zod.literal(true),
+  "explanationToken": zod.string().min(1).max(speakScanSummaryBodyExplanationTokenMax),
+  "summary": zod.string().min(1).max(speakScanSummaryBodySummaryMax).describe('Completed optional summary; sensitive values are redacted before speech generation.')
+})
+
+export const SpeakScanSummaryResponse = zod.unknown()
+
+
+/**
  * @summary Scan one selected email link after consent
  */
 export const CreateSelectedEmailLinkScanParams = zod.object({

@@ -13,6 +13,17 @@ test("allows two explanation streams per IP per minute", () => {
   });
 });
 
+test("throttles speech generation attempts independently per IP", () => {
+  const limit = createHmacWindowLimiter("test-secret", 2, 60_000);
+
+  assert.deepEqual(limit("speech-ip", 10_000), { allowed: true });
+  assert.deepEqual(limit("speech-ip", 10_001), { allowed: true });
+  assert.deepEqual(limit("speech-ip", 10_002), {
+    allowed: false,
+    retryAfterSeconds: 60,
+  });
+});
+
 test("expires the IP window and keeps other IPs independent", () => {
   const limit = createHmacWindowLimiter("test-secret", 1, 60_000);
 

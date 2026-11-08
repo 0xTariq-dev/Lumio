@@ -66,4 +66,5 @@ export * from './softwareEvidence';
 export * from './softwareEvidenceEvidenceSource';
 export * from './softwareEvidenceEvidenceStrength';
 export * from './softwareEvidenceProduct';
+export * from './speakSummaryInput';
 export * from './urlScanInput';

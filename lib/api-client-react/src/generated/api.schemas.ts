@@ -105,6 +105,21 @@ export interface ExplanationConsentInput {
   userMessage?: string;
 }
 
+export interface SpeakSummaryInput {
+  consent: true;
+  /**
+     * @minLength 1
+     * @maxLength 12000
+     */
+  explanationToken: string;
+  /**
+     * Completed optional summary; sensitive values are redacted before speech generation.
+     * @minLength 1
+     * @maxLength 1400
+     */
+  summary: string;
+}
+
 export type AgentApprovalDecisionInputDecision = typeof AgentApprovalDecisionInputDecision[keyof typeof AgentApprovalDecisionInputDecision];
 
 

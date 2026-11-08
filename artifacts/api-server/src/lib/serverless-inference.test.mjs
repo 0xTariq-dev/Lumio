@@ -1,14 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { SpeakScanSummaryBody } from "../../../../lib/api-zod/src/generated/api.ts";
 import {
   buildExplanationEvidence,
   createExplanationToken,
   DEFAULT_VULTR_INFERENCE_MODEL,
+  DEFAULT_VULTR_SPEECH_MODEL,
+  generateVultrSpeech,
   getVultrInferenceConfig,
+  MAX_SPEECH_AUDIO_BYTES,
   redactExplanationContext,
+  sanitizeSpeechText,
   summarizeVultrDocuments,
   streamVultrExplanation,
   verifyExplanationToken,
+  VultrInferenceError,
 } from "./serverless-inference.ts";
 
 const report = {
@@ -180,4 +186,108 @@ test("empty consented attachment extraction does not call Vultr", async () => {
   );
   assert.equal(summary, undefined);
   assert.equal(called, false);
+});
+
+test("speech text is bounded and redacts URLs, contacts, credentials, and identifiers", () => {
+  const text = sanitizeSpeechText(
+    "Visit https://private.example/path?token=x; email me@example.org; " +
+      "call +1 (555) 123-4567; password=hunter2; token=sk_abcdefghijklmnop; " +
+      "IP 192.0.2.8; card 4111 1111 1111 1111",
+  );
+  assert.equal(text.includes("private.example"), false);
+  assert.equal(text.includes("me@example.org"), false);
+  assert.equal(text.includes("555"), false);
+  assert.equal(text.includes("hunter2"), false);
+  assert.equal(text.includes("sk_abcdefghijklmnop"), false);
+  assert.equal(text.includes("192.0.2.8"), false);
+  assert.equal(text.includes("4111 1111 1111 1111"), false);
+  assert.match(text, /\[URL redacted\]/);
+  assert.match(text, /\[email redacted\]/);
+  assert.match(text, /\[credential redacted\]/);
+  assert.equal(sanitizeSpeechText("x".repeat(2_000)).length, 1_400);
+  assert.equal(sanitizeSpeechText("https://private.example"), "[URL redacted]");
+});
+
+test("speech request contract requires consent and bounds summary text", () => {
+  const valid = {
+    consent: true,
+    explanationToken: "signed-token",
+    summary: "A completed summary.",
+  };
+  assert.equal(SpeakScanSummaryBody.safeParse(valid).success, true);
+  assert.equal(
+    SpeakScanSummaryBody.safeParse({ ...valid, consent: false }).success,
+    false,
+  );
+  assert.equal(
+    SpeakScanSummaryBody.safeParse({ ...valid, summary: "x".repeat(1_401) }).success,
+    false,
+  );
+  assert.equal(
+    SpeakScanSummaryBody.safeParse({ ...valid, explanationToken: "x".repeat(12_001) }).success,
+    false,
+  );
+});
+
+test("Vultr speech request sends only sanitized bounded text and returns MP3 bytes", async () => {
+  let requestBody;
+  const bytes = Uint8Array.from([73, 68, 51, 1, 2, 3]);
+  const result = await generateVultrSpeech(
+    { apiKey: "synthetic-test-key", model: DEFAULT_VULTR_INFERENCE_MODEL },
+    "Summary for me@example.org: see https://private.example now.",
+    new AbortController().signal,
+    {
+      fetcher: async (url, init) => {
+        assert.equal(url, "https://api.vultrinference.com/v1/audio/speech");
+        assert.equal(init.headers.authorization, "Bearer synthetic-test-key");
+        requestBody = JSON.parse(String(init.body));
+        return new Response(bytes, {
+          status: 200,
+          headers: {
+            "content-type": "audio/mpeg",
+            "x-usage-seconds": "4.5",
+          },
+        });
+      },
+    },
+  );
+
+  assert.equal(requestBody.model, DEFAULT_VULTR_SPEECH_MODEL);
+  assert.equal(requestBody.voice, "aiden");
+  assert.equal(requestBody.response_format, "mp3");
+  assert.equal(requestBody.stream_format, "audio");
+  assert.equal(requestBody.input.includes("me@example.org"), false);
+  assert.equal(requestBody.input.includes("private.example"), false);
+  assert.deepEqual([...result.audio], [...bytes]);
+  assert.equal(result.usageSeconds, 4.5);
+});
+
+test("speech generation rejects provider failures, invalid audio, and oversized output", async () => {
+  const config = { apiKey: "synthetic-test-key", model: DEFAULT_VULTR_INFERENCE_MODEL };
+  const text = "A bounded, safe summary.";
+  await assert.rejects(
+    generateVultrSpeech(config, text, new AbortController().signal, {
+      fetcher: async () => new Response("unavailable", { status: 503 }),
+    }),
+    (error) => error instanceof VultrInferenceError && error.status === 503,
+  );
+  await assert.rejects(
+    generateVultrSpeech(config, text, new AbortController().signal, {
+      fetcher: async () => new Response("not audio", {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }),
+    }),
+    /invalid audio response/,
+  );
+  const oversized = new Uint8Array(MAX_SPEECH_AUDIO_BYTES + 1);
+  await assert.rejects(
+    generateVultrSpeech(config, text, new AbortController().signal, {
+      fetcher: async () => new Response(oversized, {
+        status: 200,
+        headers: { "content-type": "audio/mpeg" },
+      }),
+    }),
+    /size limit/,
+  );
 });

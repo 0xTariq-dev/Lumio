@@ -707,6 +707,7 @@ def analyze_email(job: dict[str, Any]) -> dict[str, Any]:
         "findings": findings[:50],
         "coverage": {"sufficient": False, "checks": coverage_checks},
         "links": links,
+        "attachmentDocuments": attachment_documents,
         "_privateLinks": private_targets,
     }
     if job.get("parseAttachmentsWithAi") is True:

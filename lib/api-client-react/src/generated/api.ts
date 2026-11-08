@@ -41,6 +41,7 @@ import type {
   ScanCancellation,
   ScanReport,
   ScanSnapshot,
+  SpeakSummaryInput,
   UrlScanInput
 } from './api.schemas';
 
@@ -814,6 +815,98 @@ export const useStreamScanExplanation = <TError = ErrorType<ApiError>,
         TContext
       > => {
       return useMutation(getStreamScanExplanationMutationOptions(options), queryClient);
+    }
+
+export const getSpeakScanSummaryUrl = (scanId: string,) => {
+
+
+
+
+  return `/api/scans/${scanId}/explanation/speech`
+}
+
+/**
+ * Requires explicit speech consent and the short-lived explanation token
+ * for this scan and browser. Sends only bounded, sanitized summary text to
+ * Vultr. Audio is returned without caching and is not stored.
+ * @summary Generate on-demand speech for an optional report summary
+ */
+export const speakScanSummary = async (scanId: string,
+    speakSummaryInput: SpeakSummaryInput, options?: Parameters<typeof customFetch>[1]): Promise<Blob> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<Blob>(getSpeakScanSummaryUrl(scanId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(speakSummaryInput)
+  }
+);}
+
+
+
+
+
+export const getSpeakScanSummaryMutationKey = () => ['speakScanSummary'] as const;
+
+export const getSpeakScanSummaryMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof speakScanSummary>>, TError,SpeakScanSummaryMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof speakScanSummary>>, TError,SpeakScanSummaryMutationVariables, TContext> => {
+
+const mutationKey = getSpeakScanSummaryMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof speakScanSummary>>, SpeakScanSummaryMutationVariables> = (props) => {
+          const {scanId,data} = props ?? {};
+
+          return  speakScanSummary(scanId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SpeakScanSummaryMutationResult = NonNullable<Awaited<ReturnType<typeof speakScanSummary>>>
+    export type SpeakScanSummaryMutationBody = BodyType<SpeakSummaryInput>
+    export type SpeakScanSummaryMutationError = ErrorType<ApiError>
+    export type SpeakScanSummaryMutationVariables = {scanId: string;data: BodyType<SpeakSummaryInput>}
+
+    /**
+ * @summary Generate on-demand speech for an optional report summary
+ */
+export const useSpeakScanSummary = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof speakScanSummary>>, TError,SpeakScanSummaryMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof speakScanSummary>>,
+        TError,
+        SpeakScanSummaryMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSpeakScanSummaryMutationOptions(options), queryClient);
     }
 
 export const getCreateSelectedEmailLinkScanUrl = (scanId: string,

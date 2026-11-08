@@ -275,13 +275,14 @@ class GuestEmailTests(unittest.TestCase):
             [("notes.txt", "text/plain", secret_text.encode())]
         )
 
-        self.assertNotIn("attachmentDocuments", report)
+        self.assertEqual(report["attachmentDocuments"], [])
         self.assertNotIn(secret_text, json.dumps(report["findings"]))
 
     def test_extracts_text_from_txt_pdf_and_only_docx_document_xml(self):
         txt = b"Text document content"
         pdf = _pdf_with_text("PDF document content")
         docx = _docx_with_text("DOCX document content")
+
         class FakePdfPage:
             def extract_text(self):
                 return "PDF document content"

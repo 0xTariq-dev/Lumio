@@ -9,6 +9,9 @@ const MAX_EXPLANATION_CONTEXT_CHARS = 1_200;
 const MAX_DOCUMENT_INPUT_CHARS = 20_000;
 const MAX_DOCUMENT_COUNT = 20;
 const MAX_DOCUMENT_SUMMARY_CHARS = 1_200;
+export const MAX_SPEECH_INPUT_CHARS = 1_400;
+export const MAX_SPEECH_AUDIO_BYTES = 6 * 1024 * 1024;
+export const DEFAULT_VULTR_SPEECH_MODEL = "qwen3-tts-12hz-1.7b";
 
 const EvidenceFindingSchema = z.object({
   title: z.string().min(1).max(100),
@@ -128,6 +131,20 @@ export function redactExplanationContext(value: string): string {
     .replace(/\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\b/gi, "[host redacted]")
     .replace(/\b(?:\d[ -]?){13,19}\b/g, "[number redacted]")
     .slice(0, MAX_EXPLANATION_CONTEXT_CHARS);
+}
+
+export function sanitizeSpeechText(value: string): string {
+  return cleanTemplateText(value, MAX_SPEECH_INPUT_CHARS)
+    .replace(/\b(?:password|passcode|secret|api[_ -]?key|access[_ -]?token)\s*[:=]\s*\S+/gi, "[credential redacted]")
+    .replace(/\b(?:sk|pk|token)[_-][A-Za-z0-9_-]{12,}\b/gi, "[credential redacted]")
+    .replace(/\bhttps?:\/\/[^\s<>"'`]+/gi, "[URL redacted]")
+    .replace(/\bwww\.[^\s<>"'`]+/gi, "[URL redacted]")
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[email redacted]")
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[IP redacted]")
+    .replace(/\b(?:\+?\d[\d().\-\s]{7,}\d)\b/g, "[phone redacted]")
+    .replace(/\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}\b/gi, "[host redacted]")
+    .replace(/\b(?:\d[ -]?){13,19}\b/g, "[number redacted]")
+    .slice(0, MAX_SPEECH_INPUT_CHARS);
 }
 
 export function buildExplanationEvidence(
@@ -420,6 +437,76 @@ export async function streamVultrExplanation(
     throw new VultrInferenceError("Inference stream ended before a complete answer");
   }
   return { outputChars, promptTokens, completionTokens };
+}
+
+export async function generateVultrSpeech(
+  config: VultrInferenceConfig,
+  summary: string,
+  signal: AbortSignal,
+  options: { fetcher?: typeof fetch } = {},
+): Promise<{ audio: Uint8Array; usageSeconds?: number }> {
+  const fetcher = options.fetcher ?? fetch;
+  const input = sanitizeSpeechText(summary);
+  if (!input) throw new VultrInferenceError("Speech text was empty after sanitization");
+
+  const response = await fetcher("https://api.vultrinference.com/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${config.apiKey}`,
+      "content-type": "application/json",
+      accept: "audio/mpeg",
+    },
+    body: JSON.stringify({
+      model: DEFAULT_VULTR_SPEECH_MODEL,
+      input,
+      voice: "aiden",
+      response_format: "mp3",
+      stream_format: "audio",
+      instructions: "Speak clearly in a calm, neutral, steady tone.",
+    }),
+    signal,
+  });
+
+  if (!response.ok) {
+    throw new VultrInferenceError("Speech provider rejected the request", response.status);
+  }
+  if (
+    !response.body ||
+    !response.headers.get("content-type")?.toLowerCase().startsWith("audio/mpeg")
+  ) {
+    throw new VultrInferenceError("Speech provider returned an invalid audio response");
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      totalBytes += chunk.value.byteLength;
+      if (totalBytes > MAX_SPEECH_AUDIO_BYTES) {
+        await reader.cancel();
+        throw new VultrInferenceError("Speech audio exceeded its size limit");
+      }
+      chunks.push(chunk.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (!totalBytes) throw new VultrInferenceError("Speech provider returned empty audio");
+
+  const audio = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    audio.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const rawUsageSeconds = response.headers.get("x-usage-seconds");
+  const usageSeconds = rawUsageSeconds && /^\d+(?:\.\d+)?$/.test(rawUsageSeconds)
+    ? Number(rawUsageSeconds)
+    : undefined;
+  return { audio, usageSeconds };
 }
 
 const DOCUMENT_SUMMARY_SYSTEM_PROMPT = [

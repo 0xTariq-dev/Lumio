@@ -289,6 +289,70 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /scans/{scanId}/explanation/speech:
+    post:
+      operationId: speakScanSummary
+      tags: [analyzer]
+      summary: Generate on-demand speech for an optional report summary
+      description: |
+        Requires explicit speech consent and the short-lived explanation token
+        for this scan and browser. Sends only bounded, sanitized summary text to
+        Vultr. Audio is returned without caching and is not stored.
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SpeakSummaryInput"
+      responses:
+        "200":
+          description: Transient MP3 audio
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Invalid request or missing consent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Explanation token belongs to another browser or scan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Speech generation was already requested for this summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          description: Speech rate or capacity limit reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Speech provider is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /scans/{scanId}/links/{linkId}:
     post:
       operationId: createSelectedEmailLinkScan
@@ -721,6 +785,23 @@ components:
           type: string
           maxLength: 1200
           description: Optional user context. Common URLs, hosts, contact details, and credential patterns are redacted before inference.
+    SpeakSummaryInput:
+      type: object
+      additionalProperties: false
+      required: [consent, explanationToken, summary]
+      properties:
+        consent:
+          type: boolean
+          enum: [true]
+        explanationToken:
+          type: string
+          minLength: 1
+          maxLength: 12000
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 1400
+          description: Completed optional summary; sensitive values are redacted before speech generation.
     AgentApprovalDecisionInput:
       type: object
       required: [decision]
