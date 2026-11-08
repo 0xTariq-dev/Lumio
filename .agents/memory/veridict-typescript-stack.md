@@ -1,10 +1,10 @@
 ---
-name: Veridict TypeScript stack
+name: Veridict hybrid TypeScript and Python stack
 description: Confirmed language/runtime choice and service boundaries for the Veridict MVP.
 ---
 
-Use TypeScript/Node.js for the Veridict web app, control plane, and analysis worker. Do not add Python solely for `.eml` parsing; parse messages with a maintained MIME library inside the isolated worker. The UI uses React, TypeScript, and Vite. Playwright handles browser navigation, while REA passively observes the same Chromium session.
+Use TypeScript/Node.js for the React/Vite web app and Express control plane, with a Python 3.12 worker for isolated analysis and Scrapling. Keep the worker on a separate Vultr host and communicate with it over a bounded private HTTPS service contract. Plain Playwright handles JavaScript navigation; REA may later passively observe the same Chromium session.
 
-**Why:** The user confirmed TypeScript throughout; REA, Playwright, the existing Express API, and the Microsandbox TypeScript SDK fit that stack, avoiding an extra runtime and cross-language protocol.
+**Why:** The user chose Python for the isolated worker to use Scrapling and Python Playwright, while keeping the existing web/API stack TypeScript. The worker boundary accepts the extra runtime because it keeps untrusted analysis off the public API host.
 
-**How to apply:** Keep the necessary control-plane-to-worker boundary as a bounded private service contract. Do not move untrusted email or URL analysis onto the public API host.
+**How to apply:** Keep web and control-plane features in TypeScript; keep scan parsing, static fetch, and browser work in the isolated Python worker. Do not move untrusted email or URL analysis onto the public API host.

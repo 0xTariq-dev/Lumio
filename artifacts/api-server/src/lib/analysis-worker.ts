@@ -51,19 +51,6 @@ type WorkerPostResult =
   | { kind: "rejected"; status: number }
   | { kind: "unavailable" };
 
-function isPrivateIpv4(hostname: string): boolean {
-  const parts = hostname.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) {
-    return false;
-  }
-  const [first, second] = parts;
-  return (
-    first === 10 ||
-    (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 168)
-  );
-}
-
 function isLoopbackOrLocal(hostname: string): boolean {
   const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (
@@ -104,26 +91,13 @@ function loadWorkerConfig(): WorkerConfig | undefined {
   try {
     const baseUrl = new URL(rawUrl);
     if (
-      !["https:", "http:"].includes(baseUrl.protocol) ||
+      baseUrl.protocol !== "https:" ||
       baseUrl.username ||
       baseUrl.password ||
       baseUrl.search ||
       baseUrl.hash ||
       baseUrl.pathname !== "/" ||
       isLoopbackOrLocal(baseUrl.hostname)
-    ) {
-      return undefined;
-    }
-
-    const isPrivateAddress =
-      isIP(baseUrl.hostname) === 4 && isPrivateIpv4(baseUrl.hostname);
-    const isPrivateServiceName =
-      !baseUrl.hostname.includes(".") ||
-      baseUrl.hostname.toLowerCase().endsWith(".internal");
-    if (
-      baseUrl.protocol === "http:" &&
-      !isPrivateAddress &&
-      !isPrivateServiceName
     ) {
       return undefined;
     }

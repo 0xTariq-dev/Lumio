@@ -1,0 +1,27 @@
+[Unit]
+Description=Veridict isolated analysis worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=veridict-worker
+SupplementaryGroups=kvm
+WorkingDirectory=/opt/veridict
+Environment=HOME=/var/lib/veridict-worker
+Environment=PYTHONPATH=/opt/veridict/services/veridict-analysis-worker
+EnvironmentFile=/etc/veridict/analysis-worker.env
+StateDirectory=veridict-worker
+UMask=0077
+ExecStart=/opt/veridict/.venv/bin/python -m worker.main
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=360
+TimeoutStopSec=20
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

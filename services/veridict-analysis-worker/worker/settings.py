@@ -49,6 +49,7 @@ class WorkerSettings:
         return bool(
             self.token
             and len(self.token) >= 32
+            and self.token.isascii()
             and self.guest_image
             and _IMAGE_DIGEST.fullmatch(self.guest_image)
         )

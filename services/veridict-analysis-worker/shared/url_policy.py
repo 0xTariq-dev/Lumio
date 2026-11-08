@@ -86,13 +86,13 @@ def normalize_public_http_url(raw_url: str) -> str:
 
 
 def sanitized_url(raw_url: str) -> str:
-    """Return a report-safe URL with credentials, query, and fragment omitted."""
+    """Return only a report-safe origin; omit path, query, and fragment."""
     parts, host, port = _parse(raw_url)
     scheme = parts.scheme.lower()
     netloc = f"[{host}]" if ":" in host else host
     if port is not None:
         netloc = f"{netloc}:{port}"
-    return urlunsplit((scheme, netloc, parts.path or "/", "", ""))[:300]
+    return urlunsplit((scheme, netloc, "/", "", ""))[:300]
 
 
 def hostname_for_url(raw_url: str) -> str:
