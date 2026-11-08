@@ -6,6 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './agentApprovalDecisionInput';
+export * from './agentApprovalDecisionInputDecision';
+export * from './agentApprovalResponse';
+export * from './agentApprovalResponseStatus';
+export * from './agentCancellationResponse';
 export * from './analysisStatus';
 export * from './analysisStatusWorkerStatus';
 export * from './apiError';

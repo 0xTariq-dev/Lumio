@@ -303,6 +303,91 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /scans/{scanId}/agent/approvals/{requestId}:
+    post:
+      operationId: resolveAgentApproval
+      tags: [analyzer]
+      summary: Approve or decline one proposed agent action
+      description: |
+        Resolves one browser-bound, single-use approval request. The request
+        is validated against the reviewed tool catalog before it can exist.
+        Approval does not authorize another tool or data scope.
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: requestId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentApprovalDecisionInput"
+      responses:
+        "200":
+          description: Approval request resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentApprovalResponse"
+        "400":
+          description: Invalid approval request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Approval belongs to another browser session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Approval request is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Approval request was already resolved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /scans/{scanId}/agent/cancel:
+    post:
+      operationId: cancelAgentApprovals
+      tags: [analyzer]
+      summary: Cancel pending agent approval requests
+      description: Cancels pending approval prompts for this browser-bound scan.
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Pending approval requests canceled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentCancellationResponse"
+        "400":
+          description: Invalid scan reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
 components:
   schemas:
     HealthStatus:
@@ -442,6 +527,37 @@ components:
           type: string
           minLength: 1
           maxLength: 12000
+    AgentApprovalDecisionInput:
+      type: object
+      required: [decision]
+      additionalProperties: false
+      properties:
+        decision:
+          type: string
+          enum: [approve, decline]
+    AgentApprovalResponse:
+      type: object
+      required: [requestId, scanId, status]
+      properties:
+        requestId:
+          type: string
+          format: uuid
+        scanId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [approved, declined]
+    AgentCancellationResponse:
+      type: object
+      required: [scanId, cancelledApprovalRequests]
+      properties:
+        scanId:
+          type: string
+          format: uuid
+        cancelledApprovalRequests:
+          type: integer
+          minimum: 0
     ScanAccepted:
       type: object
       required: [scanId, status, eventsPath, expiresAt]

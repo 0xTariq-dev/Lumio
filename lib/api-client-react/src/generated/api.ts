@@ -25,6 +25,9 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  AgentApprovalDecisionInput,
+  AgentApprovalResponse,
+  AgentCancellationResponse,
   AnalysisStatus,
   ApiError,
   EmailScanInput,
@@ -819,4 +822,173 @@ export function useStreamScanEvents<TData = Awaited<ReturnType<typeof streamScan
 
 
 
+
+export const getResolveAgentApprovalUrl = (scanId: string,
+    requestId: string,) => {
+
+
+
+
+  return `/api/scans/${scanId}/agent/approvals/${requestId}`
+}
+
+/**
+ * Resolves one browser-bound, single-use approval request. The request
+ * is validated against the reviewed tool catalog before it can exist.
+ * Approval does not authorize another tool or data scope.
+ * @summary Approve or decline one proposed agent action
+ */
+export const resolveAgentApproval = async (scanId: string,
+    requestId: string,
+    agentApprovalDecisionInput: AgentApprovalDecisionInput, options?: Parameters<typeof customFetch>[1]): Promise<AgentApprovalResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<AgentApprovalResponse>(getResolveAgentApprovalUrl(scanId,requestId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(agentApprovalDecisionInput)
+  }
+);}
+
+
+
+
+
+export const getResolveAgentApprovalMutationKey = () => ['resolveAgentApproval'] as const;
+
+export const getResolveAgentApprovalMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveAgentApproval>>, TError,ResolveAgentApprovalMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof resolveAgentApproval>>, TError,ResolveAgentApprovalMutationVariables, TContext> => {
+
+const mutationKey = getResolveAgentApprovalMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof resolveAgentApproval>>, ResolveAgentApprovalMutationVariables> = (props) => {
+          const {scanId,requestId,data} = props ?? {};
+
+          return  resolveAgentApproval(scanId,requestId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ResolveAgentApprovalMutationResult = NonNullable<Awaited<ReturnType<typeof resolveAgentApproval>>>
+    export type ResolveAgentApprovalMutationBody = BodyType<AgentApprovalDecisionInput>
+    export type ResolveAgentApprovalMutationError = ErrorType<ApiError>
+    export type ResolveAgentApprovalMutationVariables = {scanId: string;requestId: string;data: BodyType<AgentApprovalDecisionInput>}
+
+    /**
+ * @summary Approve or decline one proposed agent action
+ */
+export const useResolveAgentApproval = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof resolveAgentApproval>>, TError,ResolveAgentApprovalMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof resolveAgentApproval>>,
+        TError,
+        ResolveAgentApprovalMutationVariables,
+        TContext
+      > => {
+      return useMutation(getResolveAgentApprovalMutationOptions(options), queryClient);
+    }
+
+export const getCancelAgentApprovalsUrl = (scanId: string,) => {
+
+
+
+
+  return `/api/scans/${scanId}/agent/cancel`
+}
+
+/**
+ * Cancels pending approval prompts for this browser-bound scan.
+ * @summary Cancel pending agent approval requests
+ */
+export const cancelAgentApprovals = async (scanId: string, options?: Parameters<typeof customFetch>[1]): Promise<AgentCancellationResponse> => {
+
+  return customFetch<AgentCancellationResponse>(getCancelAgentApprovalsUrl(scanId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCancelAgentApprovalsMutationKey = () => ['cancelAgentApprovals'] as const;
+
+export const getCancelAgentApprovalsMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelAgentApprovals>>, TError,CancelAgentApprovalsMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelAgentApprovals>>, TError,CancelAgentApprovalsMutationVariables, TContext> => {
+
+const mutationKey = getCancelAgentApprovalsMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelAgentApprovals>>, CancelAgentApprovalsMutationVariables> = (props) => {
+          const {scanId} = props ?? {};
+
+          return  cancelAgentApprovals(scanId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelAgentApprovalsMutationResult = NonNullable<Awaited<ReturnType<typeof cancelAgentApprovals>>>
+
+    export type CancelAgentApprovalsMutationError = ErrorType<ApiError>
+    export type CancelAgentApprovalsMutationVariables = {scanId: string}
+
+    /**
+ * @summary Cancel pending agent approval requests
+ */
+export const useCancelAgentApprovals = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelAgentApprovals>>, TError,CancelAgentApprovalsMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof cancelAgentApprovals>>,
+        TError,
+        CancelAgentApprovalsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCancelAgentApprovalsMutationOptions(options), queryClient);
+    }
 

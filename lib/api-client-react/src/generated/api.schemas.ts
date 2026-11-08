@@ -92,6 +92,38 @@ export interface ExplanationConsentInput {
   explanationToken: string;
 }
 
+export type AgentApprovalDecisionInputDecision = typeof AgentApprovalDecisionInputDecision[keyof typeof AgentApprovalDecisionInputDecision];
+
+
+export const AgentApprovalDecisionInputDecision = {
+  approve: 'approve',
+  decline: 'decline',
+} as const;
+
+export interface AgentApprovalDecisionInput {
+  decision: AgentApprovalDecisionInputDecision;
+}
+
+export type AgentApprovalResponseStatus = typeof AgentApprovalResponseStatus[keyof typeof AgentApprovalResponseStatus];
+
+
+export const AgentApprovalResponseStatus = {
+  approved: 'approved',
+  declined: 'declined',
+} as const;
+
+export interface AgentApprovalResponse {
+  requestId: string;
+  scanId: string;
+  status: AgentApprovalResponseStatus;
+}
+
+export interface AgentCancellationResponse {
+  scanId: string;
+  /** @minimum 0 */
+  cancelledApprovalRequests: number;
+}
+
 export type ScanAcceptedStatus = typeof ScanAcceptedStatus[keyof typeof ScanAcceptedStatus];
 
 

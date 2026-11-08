@@ -192,3 +192,43 @@ export const StreamScanEventsParams = zod.object({
 export const StreamScanEventsResponse = zod.unknown()
 
 
+/**
+ * Resolves one browser-bound, single-use approval request. The request
+ * is validated against the reviewed tool catalog before it can exist.
+ * Approval does not authorize another tool or data scope.
+ * @summary Approve or decline one proposed agent action
+ */
+export const ResolveAgentApprovalParams = zod.object({
+  "scanId": zod.uuid(),
+  "requestId": zod.uuid()
+})
+
+export const ResolveAgentApprovalBody = zod.object({
+  "decision": zod.enum(['approve', 'decline'])
+})
+
+export const ResolveAgentApprovalResponse = zod.object({
+  "requestId": zod.uuid(),
+  "scanId": zod.uuid(),
+  "status": zod.enum(['approved', 'declined'])
+})
+
+
+/**
+ * Cancels pending approval prompts for this browser-bound scan.
+ * @summary Cancel pending agent approval requests
+ */
+export const CancelAgentApprovalsParams = zod.object({
+  "scanId": zod.uuid()
+})
+
+export const cancelAgentApprovalsResponseCancelledApprovalRequestsMin = 0;
+
+
+
+export const CancelAgentApprovalsResponse = zod.object({
+  "scanId": zod.uuid(),
+  "cancelledApprovalRequests": zod.int().min(cancelAgentApprovalsResponseCancelledApprovalRequestsMin)
+})
+
+
