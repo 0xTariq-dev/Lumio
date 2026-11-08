@@ -74,13 +74,7 @@ class MicrosandboxRunner:
     def __init__(self, settings: WorkerSettings):
         self.settings = settings
 
-    async def prepare(self) -> None:
-        image = self.settings.guest_image
-        if not self.settings.is_configured or not image or not _PINNED_IMAGE.fullmatch(image):
-            raise RuntimeError("Worker configuration is incomplete")
-        if not Path("/dev/kvm").exists() or not os.access("/dev/kvm", os.R_OK | os.W_OK):
-            raise RuntimeError("KVM is unavailable to the worker service")
-
+    def _msb_binary(self) -> str:
         local_msb = Path(sys.executable).with_name("msb")
         msb = (
             str(local_msb)
@@ -89,23 +83,71 @@ class MicrosandboxRunner:
         )
         if not msb:
             raise RuntimeError("Microsandbox CLI is unavailable")
+        return msb
 
+    async def _verify_local_image(self, msb: str | None = None) -> None:
+        image = self.settings.guest_image
+        local_image = self.settings.guest_image_local
+        if not image or not local_image:
+            raise RuntimeError("Local guest image configuration is incomplete")
+        expected_digest = image.rsplit("@", 1)[1].lower()
         process = await asyncio.create_subprocess_exec(
-            msb,
-            "pull",
-            image,
-            stdout=asyncio.subprocess.DEVNULL,
+            msb or self._msb_binary(),
+            "image",
+            "inspect",
+            "--format",
+            "json",
+            local_image,
+            stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
         try:
-            async with asyncio.timeout(300):
-                exit_code = await process.wait()
+            async with asyncio.timeout(30):
+                stdout, _ = await process.communicate()
         except TimeoutError as exc:
             process.kill()
             await process.wait()
-            raise RuntimeError("Guest image preparation timed out") from exc
-        if exit_code != 0:
-            raise RuntimeError("Guest image preparation failed")
+            raise RuntimeError("Local guest image verification timed out") from exc
+        if process.returncode != 0:
+            raise RuntimeError("Local guest image is unavailable")
+        try:
+            image_info = json.loads(stdout)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Local guest image metadata is invalid") from exc
+        if not isinstance(image_info, dict) or not isinstance(
+            image_info.get("digest"), str
+        ):
+            raise RuntimeError("Local guest image metadata is invalid")
+        if image_info["digest"].lower() != expected_digest:
+            raise RuntimeError("Local guest image digest does not match configuration")
+
+    async def prepare(self) -> None:
+        image = self.settings.guest_image
+        if not self.settings.is_configured or not image or not _PINNED_IMAGE.fullmatch(image):
+            raise RuntimeError("Worker configuration is incomplete")
+        if not Path("/dev/kvm").exists() or not os.access("/dev/kvm", os.R_OK | os.W_OK):
+            raise RuntimeError("KVM is unavailable to the worker service")
+
+        msb = self._msb_binary()
+        if self.settings.guest_image_local:
+            await self._verify_local_image(msb)
+        else:
+            process = await asyncio.create_subprocess_exec(
+                msb,
+                "pull",
+                image,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                async with asyncio.timeout(300):
+                    exit_code = await process.wait()
+            except TimeoutError as exc:
+                process.kill()
+                await process.wait()
+                raise RuntimeError("Guest image preparation timed out") from exc
+            if exit_code != 0:
+                raise RuntimeError("Guest image preparation failed")
         await self._remove_orphaned_sandboxes()
 
     async def _remove_orphaned_sandboxes(self) -> None:
@@ -124,9 +166,11 @@ class MicrosandboxRunner:
         task_plan: list[str],
         progress: ProgressCallback,
     ) -> dict[str, Any]:
-        image = self.settings.guest_image
+        image = self.settings.guest_image_local or self.settings.guest_image
         if not image:
             raise RuntimeError("Guest image is not configured")
+        if self.settings.guest_image_local:
+            await self._verify_local_image()
         if tuple(task_plan) != URL_PLAN_ACTIONS:
             raise ValueError("Unsupported URL task plan")
 

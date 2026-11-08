@@ -65,6 +65,8 @@ worker sets its own User-Agent and suppresses Scrapling URL-bearing logs.
    ```text
    ANALYSIS_WORKER_TOKEN=<random value of at least 32 characters>
    ANALYSIS_GUEST_IMAGE=registry.example/veridict-analysis-guest@sha256:<digest>
+    # Optional when the image is preloaded into this service account's local cache:
+    ANALYSIS_GUEST_IMAGE_LOCAL=veridict-analysis-guest:2026-11-08
    ANALYSIS_WORKER_BIND_HOST=<worker private-network address>
    ANALYSIS_WORKER_PORT=8001
    ANALYSIS_WORKER_TLS_CERT=/etc/veridict/worker.crt
@@ -84,9 +86,11 @@ worker sets its own User-Agent and suppresses Scrapling URL-bearing logs.
    Coolify controller may deploy the application, but the Microsandbox
    supervisor remains a host service.
 
-The service pre-pulls the digest-pinned guest image at startup and uses
-`PullPolicy.NEVER` for scans. Health remains unavailable until configuration,
-KVM access, and image preparation all succeed.
+When `ANALYSIS_GUEST_IMAGE_LOCAL` is set, the service checks the local image's
+manifest digest against `ANALYSIS_GUEST_IMAGE` at startup and before each scan,
+then uses the cached image with `PullPolicy.NEVER`. Without that setting, it
+pre-pulls the digest-pinned image at startup. Health remains unavailable until
+configuration, KVM access, and image preparation all succeed.
 
 ## Local checks
 

@@ -91,14 +91,20 @@ class RunnerProtocolTests(unittest.IsolatedAsyncioTestCase):
         )
         sandbox = FakeSandbox(handle)
         create = AsyncMock(return_value=sandbox)
-        settings = WorkerSettings(token="x" * 40, guest_image=IMAGE)
+        settings = WorkerSettings(
+            token="x" * 40,
+            guest_image=IMAGE,
+            guest_image_local="veridict-analysis-guest:2026-11-08",
+        )
         progress_events = []
+        runner = MicrosandboxRunner(settings)
+        runner._verify_local_image = AsyncMock()
 
         async def progress(stage, reason_code=None):
             progress_events.append((stage, reason_code))
 
         with patch("worker.microsandbox_runner.Sandbox.create", create):
-            report = await MicrosandboxRunner(settings).analyze(
+            report = await runner.analyze(
                 SCAN_ID,
                 "https://example.com/path?private=value",
                 ["http", "static", "browser", "report"],
@@ -124,8 +130,11 @@ class RunnerProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["timeout"], 180)
 
         options = create.await_args.kwargs
-        self.assertEqual(options["image"], IMAGE)
+        self.assertEqual(
+            options["image"], "veridict-analysis-guest:2026-11-08"
+        )
         self.assertEqual(options["pull_policy"], PullPolicy.NEVER)
+        runner._verify_local_image.assert_awaited_once()
         self.assertEqual(options["cpus"], 1)
         self.assertEqual(options["max_cpus"], 1)
         self.assertEqual(options["memory"], 2048)
@@ -135,6 +144,65 @@ class RunnerProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             options["labels"]["app"], "veridict-analysis-worker"
         )
+
+    async def test_local_image_verification_rejects_digest_mismatch(self):
+        settings = WorkerSettings(
+            token="x" * 40,
+            guest_image=IMAGE,
+            guest_image_local="veridict-analysis-guest:2026-11-08",
+        )
+        runner = MicrosandboxRunner(settings)
+
+        class FakeProcess:
+            returncode = 0
+
+            async def communicate(self):
+                return (
+                    json.dumps({"digest": "sha256:" + "b" * 64}).encode(),
+                    b"",
+                )
+
+        with patch(
+            "worker.microsandbox_runner.asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=FakeProcess()),
+        ) as spawn:
+            with self.assertRaisesRegex(RuntimeError, "digest does not match"):
+                await runner._verify_local_image("/usr/bin/msb")
+
+        self.assertEqual(
+            spawn.await_args.args,
+            (
+                "/usr/bin/msb",
+                "image",
+                "inspect",
+                "--format",
+                "json",
+                "veridict-analysis-guest:2026-11-08",
+            ),
+        )
+
+    async def test_local_image_verification_accepts_matching_digest(self):
+        settings = WorkerSettings(
+            token="x" * 40,
+            guest_image=IMAGE,
+            guest_image_local="veridict-analysis-guest:2026-11-08",
+        )
+        runner = MicrosandboxRunner(settings)
+
+        class FakeProcess:
+            returncode = 0
+
+            async def communicate(self):
+                return (
+                    json.dumps({"digest": IMAGE.rsplit("@", 1)[1]}).encode(),
+                    b"",
+                )
+
+        with patch(
+            "worker.microsandbox_runner.asyncio.create_subprocess_exec",
+            new=AsyncMock(return_value=FakeProcess()),
+        ):
+            await runner._verify_local_image("/usr/bin/msb")
 
 
 if __name__ == "__main__":
