@@ -15,12 +15,14 @@ IMAGE = "registry.example/veridict-guest@sha256:" + "a" * 64
 
 
 class FakeAnalyzer:
-    def __init__(self, *, block=False, redirect_blocked=False):
+    def __init__(self, *, block=False, redirect_blocked=False, fail_next=False):
         self.block = block
         self.redirect_blocked = redirect_blocked
+        self.fail_next = fail_next
         self.started = asyncio.Event()
         self.release = asyncio.Event()
         self.email_link_id = uuid4()
+        self.last_request = None
         self.seen_urls = []
 
     async def prepare(self):
@@ -28,8 +30,12 @@ class FakeAnalyzer:
 
     async def analyze(self, scan_id, request, _task_plan, progress):
         self.started.set()
+        self.last_request = request
         if self.block:
             await self.release.wait()
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("fake analysis failure")
         if isinstance(request, EmailScanRequest):
             await progress("analyzing_email")
             await progress("building_report")
@@ -428,6 +434,70 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(json.loads(body)["error"]["code"], "SCAN_QUEUE_FULL")
 
             self.analyzer.release.set()
+
+    async def test_failed_email_scan_clears_input_and_recovers_queue(self):
+        self.analyzer.fail_next = True
+        failed_scan_id = uuid4()
+        async with self.app.router.lifespan_context(self.app):
+            status, _, body = await asgi_request(
+                self.app,
+                "POST",
+                "/v1/scans",
+                headers=request_headers(),
+                body=json.dumps(email_payload(failed_scan_id)).encode(),
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(json.loads(body)["accepted"])
+            await self.analyzer.started.wait()
+
+            status, _, event_body = await asgi_request(
+                self.app,
+                "GET",
+                f"/v1/scans/{failed_scan_id}/events",
+                headers={"authorization": f"Bearer {TOKEN}"},
+            )
+            self.assertEqual(status, 200)
+            self.assertIn(b"event: failed", event_body)
+            self.assertNotIn(b"event: completed", event_body)
+            self.assertNotIn(b"private body", event_body)
+            self.assertNotIn(b"sender@example.com", event_body)
+            self.assertEqual(self.analyzer.last_request.emailBase64, "")
+
+            manager = self.app.state.scan_manager
+            self.assertEqual(manager.active_count, 0)
+            self.assertEqual(manager.queued_count, 0)
+
+            health_status, _, health_body = await asgi_request(
+                self.app,
+                "GET",
+                "/healthz",
+                headers=request_headers(),
+            )
+            health = json.loads(health_body)
+            self.assertEqual(health_status, 200)
+            self.assertEqual(health["status"], "ready")
+            self.assertEqual(health["queue"]["active"], 0)
+            self.assertEqual(health["queue"]["queued"], 0)
+
+            next_scan_id = uuid4()
+            status, _, body = await asgi_request(
+                self.app,
+                "POST",
+                "/v1/scans",
+                headers=request_headers(),
+                body=json.dumps(scan_payload(next_scan_id)).encode(),
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(json.loads(body)["accepted"])
+            _, _, next_events = await asgi_request(
+                self.app,
+                "GET",
+                f"/v1/scans/{next_scan_id}/events",
+                headers={"authorization": f"Bearer {TOKEN}"},
+            )
+            completed_report(next_events)
+            self.assertEqual(manager.active_count, 0)
+            self.assertEqual(manager.queued_count, 0)
 
 
 if __name__ == "__main__":
