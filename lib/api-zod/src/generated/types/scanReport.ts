@@ -21,6 +21,11 @@ export interface ScanReport {
   findings: ScanFinding[];
   coverage: ScanCoverage;
   /**
+     * Short-lived token binding redacted evidence to this browser; not part of the exported report.
+     * @maxLength 12000
+     */
+  explanationToken?: string;
+  /**
      * @minItems 6
      * @maxItems 6
      */

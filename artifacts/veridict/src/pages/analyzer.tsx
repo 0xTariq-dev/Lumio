@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useGetAnalysisStatus,
   getGetAnalysisStatusQueryKey,
@@ -23,6 +23,7 @@ import {
   LockKeyhole,
   Printer,
   ShieldCheck,
+  Sparkles,
   Upload,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -34,6 +35,7 @@ import {
   StepperSeparator,
   StepperTrigger,
 } from '@/components/reui/stepper';
+import { streamReportExplanation } from '@/lib/explanation-stream';
 
 type InputMode = 'url' | 'email';
 type StreamFailure = { message?: string };
@@ -185,7 +187,7 @@ function escapeHtml(value: unknown) {
   })[char] as string);
 }
 
-function reportHtml(report: ScanReport) {
+function reportHtml(report: ScanReport, explanationText = '') {
   const executionPlan = (report.executionPlan ?? []).map((step) => `
     <li><strong>${escapeHtml(planStepLabel(step.id, report.type))}</strong> — ${escapeHtml(planStatusLabels[step.status])}${step.reasonCode ? `: ${escapeHtml(planReasonLabel(step.reasonCode, report.type))}` : ''}</li>`).join('');
   const findings = report.findings.map((finding) => `
@@ -200,18 +202,22 @@ function reportHtml(report: ScanReport) {
     `<li><strong>${escapeHtml(check.name)}</strong> — ${escapeHtml(check.status)}${check.reason ? `: ${escapeHtml(check.reason)}` : ''}</li>`).join('');
   const links = (report.links ?? []).map((link) =>
     `<li>${escapeHtml(link.anchorText || link.targetHost)} — ${escapeHtml(link.displayUrl)} <span class="muted">(${link.scanAvailable ? 'scan available' : 'not available'})</span></li>`).join('');
+  const explanation = explanationText
+    ? `<section class="explanation"><h2>Optional AI explanation</h2><p>${escapeHtml(explanationText)}</p><p class="muted">Model-generated explanation only. It does not change the deterministic risk band. Only a redacted evidence summary was sent to Vultr; prompt-retention and model-training terms are unverified.</p></section>`
+    : '';
   return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Veridict analysis report</title><style>
     *{box-sizing:border-box}body{margin:0;background:#f6f6f7;color:#18181b;font:15px/1.6 system-ui,sans-serif}
     main{max-width:860px;margin:40px auto;padding:36px;background:white;border:1px solid #e4e4e7;border-radius:14px}
     h1{font-size:30px;margin:8px 0}h2{font-size:18px;margin:8px 0}.meta,.muted{color:#71717a;font-size:13px}
     .band{display:inline-block;border:1px solid #d4d4d8;border-radius:999px;padding:3px 12px;font-weight:650}
-    .finding{border-top:1px solid #e4e4e7;padding:18px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f4f5;padding:10px;border-radius:8px}
+    .finding{border-top:1px solid #e4e4e7;padding:18px 0}.explanation{border-top:1px solid #e4e4e7;margin-top:22px;padding-top:16px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f4f5;padding:10px;border-radius:8px}
     li{margin:7px 0}footer{border-top:1px solid #e4e4e7;margin-top:24px;padding-top:16px;color:#71717a;font-size:12px}
     @media print{body{background:white}main{margin:0 auto;border:0;padding:0}}
   </style><main><div class="meta">VERIDICT · EVIDENCE REPORT</div><h1>${escapeHtml(riskLabel(report.riskBand))} risk</h1><p class="meta">Completed ${escapeHtml(formatDate(report.completedAt))} · Rule set ${escapeHtml(report.ruleSetVersion)}</p>
     ${executionPlan ? `<h2>Execution plan</h2><ol>${executionPlan}</ol>` : ''}
     <h2>Evidence and findings</h2>${findings || '<p>No findings were returned by the analyzer.</p>'}
     <h2>Coverage</h2><p>${report.coverage.sufficient ? 'Coverage marked sufficient by the analyzer.' : 'Coverage is limited; interpret this result with caution.'}</p><ul>${checks}</ul>
+    ${explanation}
     ${links ? `<h2>Links found in email</h2><ul>${links}</ul>` : ''}
     <footer>This report contains only the evidence returned by Veridict. It is not a guarantee that a message or URL is safe.</footer>
   </main></html>`;
@@ -240,6 +246,11 @@ export default function AnalyzerPage() {
   const [streamError, setStreamError] = useState('');
   const [streamFinished, setStreamFinished] = useState(false);
   const [selectedLinkId, setSelectedLinkId] = useState('');
+  const [explanationConsent, setExplanationConsent] = useState(false);
+  const [explanationText, setExplanationText] = useState('');
+  const [explanationError, setExplanationError] = useState('');
+  const [explanationStatus, setExplanationStatus] = useState<'idle' | 'streaming' | 'complete' | 'error'>('idle');
+  const explanationAbortRef = useRef<AbortController | null>(null);
   const scanQuery = useGetScan(scanAccepted?.scanId ?? '', {
     query: {
       queryKey: getGetScanQueryKey(scanAccepted?.scanId ?? ''),
@@ -315,13 +326,21 @@ export default function AnalyzerPage() {
     }
   }, [scanQuery.data, report]);
 
+  useEffect(() => () => explanationAbortRef.current?.abort(), []);
+
   function beginAccepted(accepted: ScanAccepted, type: ScanReport['type'], preserveEmail = false) {
+    explanationAbortRef.current?.abort();
+    explanationAbortRef.current = null;
     setScanAccepted(accepted);
     setScanType(type);
     setProgress(null);
     setReport(null);
     setStreamError('');
     setStreamFinished(false);
+    setExplanationConsent(false);
+    setExplanationText('');
+    setExplanationError('');
+    setExplanationStatus('idle');
     setUrlConsent(false);
     setEmailConsent(false);
     setLinkConsent(false);
@@ -406,7 +425,7 @@ export default function AnalyzerPage() {
 
   function exportReport() {
     if (!activeReport) return;
-    const blob = new Blob([reportHtml(activeReport)], { type: 'text/html;charset=utf-8' });
+    const blob = new Blob([reportHtml(activeReport, explanationText)], { type: 'text/html;charset=utf-8' });
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = objectUrl;
@@ -415,6 +434,43 @@ export default function AnalyzerPage() {
     anchor.click();
     anchor.remove();
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  }
+
+  async function requestExplanation() {
+    if (!activeReport?.explanationToken || !explanationConsent) {
+      setExplanationError('Confirm separate consent before requesting an explanation.');
+      return;
+    }
+    explanationAbortRef.current?.abort();
+    const controller = new AbortController();
+    explanationAbortRef.current = controller;
+    setExplanationText('');
+    setExplanationError('');
+    setExplanationStatus('streaming');
+    try {
+      await streamReportExplanation(
+        activeReport.scanId,
+        activeReport.explanationToken,
+        controller.signal,
+        (delta) => setExplanationText((current) => `${current}${delta}`.slice(0, 1400)),
+      );
+      setExplanationStatus('complete');
+    } catch (error) {
+      if (controller.signal.aborted) {
+        setExplanationError('Explanation canceled. Your report is unchanged.');
+      } else {
+        setExplanationError(error instanceof Error
+          ? error.message
+          : 'The optional explanation could not be completed. Your report is unchanged.');
+      }
+      setExplanationStatus('error');
+    } finally {
+      if (explanationAbortRef.current === controller) explanationAbortRef.current = null;
+    }
+  }
+
+  function cancelExplanation() {
+    explanationAbortRef.current?.abort();
   }
 
   const readinessText = statusQuery.isLoading
@@ -581,7 +637,11 @@ export default function AnalyzerPage() {
               <ReportView report={activeReport} onExport={exportReport} emailLinks={emailLinks}
                 selectedLinkId={selectedLinkId} setSelectedLinkId={(id) => { setSelectedLinkId(id); setLinkConsent(false); setFormError(''); }}
                 linkConsent={linkConsent} setLinkConsent={setLinkConsent} onScanLink={scanSelectedLink}
-                selectedLinkPending={createSelectedLink.isPending} />
+                selectedLinkPending={createSelectedLink.isPending}
+                explanationConsent={explanationConsent} setExplanationConsent={setExplanationConsent}
+                explanationText={explanationText} explanationError={explanationError}
+                explanationStatus={explanationStatus} onExplain={requestExplanation}
+                onCancelExplanation={cancelExplanation} />
             ) : streamError ? (
               <div className="rounded-xl border border-border bg-card p-6 shadow-sm" role="status" data-testid="status-analysis-unavailable">
                 <div className="flex size-10 items-center justify-center rounded-full bg-muted"><CircleAlert className="size-5 text-muted-foreground" aria-hidden="true" /></div>
@@ -628,6 +688,13 @@ function ReportView({
   setLinkConsent,
   onScanLink,
   selectedLinkPending,
+  explanationConsent,
+  setExplanationConsent,
+  explanationText,
+  explanationError,
+  explanationStatus,
+  onExplain,
+  onCancelExplanation,
 }: {
   report: ScanReport;
   onExport: () => void;
@@ -638,6 +705,13 @@ function ReportView({
   setLinkConsent: (consent: boolean) => void;
   onScanLink: () => void;
   selectedLinkPending: boolean;
+  explanationConsent: boolean;
+  setExplanationConsent: (consent: boolean) => void;
+  explanationText: string;
+  explanationError: string;
+  explanationStatus: 'idle' | 'streaming' | 'complete' | 'error';
+  onExplain: () => void;
+  onCancelExplanation: () => void;
 }) {
   const riskColor = report.riskBand === 'critical' || report.riskBand === 'high'
     ? 'border-destructive/30 bg-destructive/5 text-destructive'
@@ -717,6 +791,53 @@ function ReportView({
 
         {!!report.executionPlan?.length && (
           <ExecutionPlanList steps={report.executionPlan} testId="report-execution-plan" type={report.type} />
+        )}
+
+        {report.explanationToken && (
+          <section className="mt-6 rounded-lg border border-border bg-muted/20 p-4" aria-labelledby="explanation-title" data-testid="section-ai-explanation">
+            <div className="flex items-start gap-3">
+              <Sparkles className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <div className="min-w-0">
+                <h3 id="explanation-title" className="text-sm font-semibold">Optional AI explanation</h3>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground print:hidden">
+                  If you opt in, Veridict sends Vultr a short redacted summary of this report—not the raw email, full URL, or email link list. Vultr’s prompt-retention and model-training terms have not been verified. The explanation may be wrong and never changes the risk band.
+                </p>
+              </div>
+            </div>
+            <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-md border border-border bg-background p-3 text-sm leading-5 print:hidden">
+              <input type="checkbox" checked={explanationConsent}
+                onChange={(event) => setExplanationConsent(event.target.checked)}
+                disabled={explanationStatus === 'streaming' || explanationStatus === 'complete'}
+                data-testid="checkbox-ai-explanation-consent"
+                className="mt-0.5 size-4 shrink-0 accent-foreground" />
+              <span>I consent to send this redacted evidence summary to Vultr for an explanation.</span>
+            </label>
+            <div className="mt-3 flex flex-wrap gap-2 print:hidden">
+              <button type="button" onClick={onExplain}
+                disabled={!explanationConsent || explanationStatus === 'streaming' || explanationStatus === 'complete' || (explanationStatus === 'error' && !!explanationText)}
+                data-testid="button-request-ai-explanation"
+                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
+                {explanationStatus === 'streaming' ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : <Sparkles className="size-4" aria-hidden="true" />}
+                {explanationStatus === 'error' && !explanationText ? 'Retry explanation' : explanationStatus === 'complete' ? 'Explanation complete' : 'Explain this report'}
+              </button>
+              {explanationStatus === 'streaming' && (
+                <button type="button" onClick={onCancelExplanation}
+                  data-testid="button-cancel-ai-explanation"
+                  className="inline-flex min-h-10 items-center justify-center rounded-lg border border-input bg-background px-4 text-sm font-medium hover:bg-muted">
+                  Cancel
+                </button>
+              )}
+            </div>
+            {explanationError && <p className="mt-3 text-sm text-destructive print:hidden" role="status" data-testid="status-ai-explanation-error">{explanationError}</p>}
+            {explanationStatus === 'streaming' && <p className="mt-3 text-xs text-muted-foreground print:hidden" role="status" data-testid="status-ai-explanation-streaming">Streaming a short explanation from Vultr Serverless Inference…</p>}
+            {explanationText && (
+              <div className="mt-4 rounded-md border border-border bg-background p-4" aria-live="polite" data-testid="text-ai-explanation">
+                <h4 className="text-sm font-semibold">Model-generated explanation</h4>
+                <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{explanationText}</p>
+                <p className="mt-3 text-xs leading-5 text-muted-foreground">Explanation only. Use the deterministic evidence and coverage above as the report; this text does not establish that the item is safe.</p>
+              </div>
+            )}
+          </section>
         )}
 
         {attachments.length > 0 && (

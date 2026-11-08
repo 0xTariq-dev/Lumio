@@ -28,6 +28,7 @@ import type {
   AnalysisStatus,
   ApiError,
   EmailScanInput,
+  ExplanationConsentInput,
   HealthStatus,
   LinkScanConsent,
   ScanAccepted,
@@ -531,6 +532,98 @@ export function useGetScan<TData = Awaited<ReturnType<typeof getScan>>, TError =
 
 
 
+
+export const getStreamScanExplanationUrl = (scanId: string,) => {
+
+
+
+
+  return `/api/scans/${scanId}/explanation/stream`
+}
+
+/**
+ * Requires separate per-scan consent and a short-lived, browser-bound
+ * evidence token. Sends only a bounded, redacted evidence summary to
+ * Vultr Serverless Inference. The explanation cannot alter the report.
+ * @summary Stream an optional explanation of a completed report
+ */
+export const streamScanExplanation = async (scanId: string,
+    explanationConsentInput: ExplanationConsentInput, options?: Parameters<typeof customFetch>[1]): Promise<string> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<string>(getStreamScanExplanationUrl(scanId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(explanationConsentInput)
+  }
+);}
+
+
+
+
+
+export const getStreamScanExplanationMutationKey = () => ['streamScanExplanation'] as const;
+
+export const getStreamScanExplanationMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof streamScanExplanation>>, TError,StreamScanExplanationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof streamScanExplanation>>, TError,StreamScanExplanationMutationVariables, TContext> => {
+
+const mutationKey = getStreamScanExplanationMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof streamScanExplanation>>, StreamScanExplanationMutationVariables> = (props) => {
+          const {scanId,data} = props ?? {};
+
+          return  streamScanExplanation(scanId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type StreamScanExplanationMutationResult = NonNullable<Awaited<ReturnType<typeof streamScanExplanation>>>
+    export type StreamScanExplanationMutationBody = BodyType<ExplanationConsentInput>
+    export type StreamScanExplanationMutationError = ErrorType<ApiError>
+    export type StreamScanExplanationMutationVariables = {scanId: string;data: BodyType<ExplanationConsentInput>}
+
+    /**
+ * @summary Stream an optional explanation of a completed report
+ */
+export const useStreamScanExplanation = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof streamScanExplanation>>, TError,StreamScanExplanationMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof streamScanExplanation>>,
+        TError,
+        StreamScanExplanationMutationVariables,
+        TContext
+      > => {
+      return useMutation(getStreamScanExplanationMutationOptions(options), queryClient);
+    }
 
 export const getCreateSelectedEmailLinkScanUrl = (scanId: string,
     linkId: string,) => {

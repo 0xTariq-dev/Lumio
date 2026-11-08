@@ -13,6 +13,7 @@ export * from './coverageCheck';
 export * from './coverageCheckStatus';
 export * from './emailLink';
 export * from './emailScanInput';
+export * from './explanationConsentInput';
 export * from './healthStatus';
 export * from './linkScanConsent';
 export * from './queueStatus';

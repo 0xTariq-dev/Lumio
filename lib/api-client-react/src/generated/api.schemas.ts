@@ -65,6 +65,15 @@ export interface LinkScanConsent {
   consent: true;
 }
 
+export interface ExplanationConsentInput {
+  consent: true;
+  /**
+     * @minLength 1
+     * @maxLength 12000
+     */
+  explanationToken: string;
+}
+
 export type ScanAcceptedStatus = typeof ScanAcceptedStatus[keyof typeof ScanAcceptedStatus];
 
 
@@ -307,6 +316,11 @@ export interface ScanReport {
   ruleSetVersion: string;
   findings: ScanFinding[];
   coverage: ScanCoverage;
+  /**
+     * Short-lived token binding redacted evidence to this browser; not part of the exported report.
+     * @maxLength 12000
+     */
+  explanationToken?: string;
   /**
      * @minItems 6
      * @maxItems 6

@@ -148,6 +148,71 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /scans/{scanId}/explanation/stream:
+    post:
+      operationId: streamScanExplanation
+      tags: [analyzer]
+      summary: Stream an optional explanation of a completed report
+      description: |
+        Requires separate per-scan consent and a short-lived, browser-bound
+        evidence token. Sends only a bounded, redacted evidence summary to
+        Vultr Serverless Inference. The explanation cannot alter the report.
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExplanationConsentInput"
+      responses:
+        "200":
+          description: Server-Sent Events explanation stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          description: Invalid request or missing consent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "403":
+          description: Evidence token is invalid or belongs to another browser
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Evidence token has expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Explanation token was already used
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "429":
+          description: Explanation capacity is full
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Inference provider is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /scans/{scanId}/links/{linkId}:
     post:
       operationId: createSelectedEmailLinkScan
@@ -342,6 +407,17 @@ components:
         consent:
           type: boolean
           enum: [true]
+    ExplanationConsentInput:
+      type: object
+      required: [consent, explanationToken]
+      properties:
+        consent:
+          type: boolean
+          enum: [true]
+        explanationToken:
+          type: string
+          minLength: 1
+          maxLength: 12000
     ScanAccepted:
       type: object
       required: [scanId, status, eventsPath, expiresAt]
@@ -462,6 +538,10 @@ components:
             $ref: "#/components/schemas/ScanFinding"
         coverage:
           $ref: "#/components/schemas/ScanCoverage"
+        explanationToken:
+          type: string
+          maxLength: 12000
+          description: Short-lived token binding redacted evidence to this browser; not part of the exported report.
         executionPlan:
           type: array
           minItems: 6

@@ -31,6 +31,7 @@ import {
   type QuotaReservationEntry,
 } from "../lib/scan-quotas";
 import { logger } from "../lib/logger";
+import { createExplanationToken } from "../lib/serverless-inference";
 
 const router: IRouter = Router();
 const MAX_EMAIL_BYTES = 10 * 1024 * 1024;
@@ -141,6 +142,7 @@ const ScanReportSchema = z.object({
     )
     .max(50)
     .optional(),
+  explanationToken: z.string().max(12_000).optional(),
 });
 
 type ScanReportPayload = z.infer<typeof ScanReportSchema>;
@@ -653,6 +655,7 @@ router.post(
 function parseEventBlock(
   block: string,
   expectedScanId: string,
+  browserToken: string,
 ): { event: string; data: unknown } | undefined {
   let eventName = "message";
   const dataLines: string[] = [];
@@ -688,7 +691,14 @@ function parseEventBlock(
     if (report.scanId !== expectedScanId) {
       throw new Error("Worker event scan reference mismatch");
     }
-    return { event: "completed", data: sanitizeEmailReport(report) };
+    const safeReport = sanitizeEmailReport(report);
+    return {
+      event: "completed",
+      data: {
+        ...safeReport,
+        explanationToken: createExplanationToken(safeReport, browserToken),
+      },
+    };
   }
   if (eventName === "failed") {
     return {
@@ -751,6 +761,7 @@ router.get("/scans/:scanId/events", async (req, res) => {
 
   const controller = new AbortController();
   const hardTimeout = setTimeout(() => controller.abort(), 185_000);
+  const browserToken = getOrCreateBrowserToken(req, res);
   const onClose = () => {
     if (!res.writableEnded) controller.abort();
   };
@@ -813,7 +824,7 @@ router.get("/scans/:scanId/events", async (req, res) => {
       while (boundary >= 0) {
         const block = buffer.slice(0, boundary);
         buffer = buffer.slice(boundary + 2);
-        const event = parseEventBlock(block, params.data.scanId);
+        const event = parseEventBlock(block, params.data.scanId, browserToken);
         if (event) {
           res.write(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
           if (event.event === "completed" || event.event === "failed") {

@@ -123,6 +123,28 @@ export const GetScanResponse = zod.object({
 
 
 /**
+ * Requires separate per-scan consent and a short-lived, browser-bound
+ * evidence token. Sends only a bounded, redacted evidence summary to
+ * Vultr Serverless Inference. The explanation cannot alter the report.
+ * @summary Stream an optional explanation of a completed report
+ */
+export const StreamScanExplanationParams = zod.object({
+  "scanId": zod.uuid()
+})
+
+export const streamScanExplanationBodyExplanationTokenMax = 12000;
+
+
+
+export const StreamScanExplanationBody = zod.object({
+  "consent": zod.literal(true),
+  "explanationToken": zod.string().min(1).max(streamScanExplanationBodyExplanationTokenMax)
+})
+
+export const StreamScanExplanationResponse = zod.unknown()
+
+
+/**
  * @summary Scan one selected email link after consent
  */
 export const CreateSelectedEmailLinkScanParams = zod.object({
