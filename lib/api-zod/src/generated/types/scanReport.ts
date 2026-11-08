@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AgentActionResult } from './agentActionResult';
 import type { EmailLink } from './emailLink';
 import type { ScanCoverage } from './scanCoverage';
 import type { ScanFinding } from './scanFinding';
@@ -38,4 +39,9 @@ export interface ScanReport {
   executionPlan?: ScanPlanStep[];
   /** @maxItems 50 */
   links?: EmailLink[];
+  /**
+     * Approval-gated follow-up steps. Shown separately; they never change the risk band.
+     * @maxItems 3
+     */
+  agentActions?: AgentActionResult[];
 }

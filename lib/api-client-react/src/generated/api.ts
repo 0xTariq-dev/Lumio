@@ -377,6 +377,9 @@ export const createEmailScan = async (emailScanInput: EmailScanInput, options?: 
     const formData = new FormData();
 formData.append(`file`, emailScanInput.file);
 formData.append(`consent`, emailScanInput.consent.toString())
+if(emailScanInput.agentReview !== undefined) {
+ formData.append(`agentReview`, emailScanInput.agentReview.toString())
+ }
 
   return customFetch<ScanAccepted>(getCreateEmailScanUrl(),
   {
@@ -1016,7 +1019,10 @@ export const getResolveAgentApprovalUrl = (scanId: string,
 /**
  * Resolves one browser-bound, single-use approval request. The request
  * is validated against the reviewed tool catalog before it can exist.
- * Approval does not authorize another tool or data scope.
+ * Approval does not authorize another tool or data scope. An approved
+ * step is dispatched to the isolated worker using the stored proposal,
+ * never client-supplied arguments. Declining publishes the report from
+ * the completed checks with a visible coverage limitation.
  * @summary Approve or decline one proposed agent action
  */
 export const resolveAgentApproval = async (scanId: string,
@@ -1107,7 +1113,11 @@ export const getCreateAgentProposalUrl = (scanId: string,) => {
 }
 
 /**
- * Requires a completed deterministic scan. The response is a pending proposal; no tool is dispatched.
+ * Requires a review-enabled scan that is paused before its report
+ * (status awaiting_review) and the browser that started it. Returns the
+ * existing pending proposal when one exists. No tool is dispatched until
+ * the proposal is approved. A 409 with code AGENT_REVIEW_COMPLETE means no
+ * further step is available and the report is being finalized.
  * @summary Request one approval-gated follow-up proposal
  */
 export const createAgentProposal = async (scanId: string,
@@ -1197,7 +1207,7 @@ export const getCancelAgentApprovalsUrl = (scanId: string,) => {
 }
 
 /**
- * Cancels pending approval prompts for this browser-bound scan.
+ * Cancels pending approval prompts for this browser-bound scan. A paused review then publishes its report from the completed checks.
  * @summary Cancel pending agent approval requests
  */
 export const cancelAgentApprovals = async (scanId: string, options?: Parameters<typeof customFetch>[1]): Promise<AgentCancellationResponse> => {

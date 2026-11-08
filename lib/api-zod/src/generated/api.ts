@@ -72,7 +72,8 @@ export const createUrlScanBodyUrlMax = 2048;
 
 export const CreateUrlScanBody = zod.object({
   "url": zod.string().min(1).max(createUrlScanBodyUrlMax).describe('Absolute HTTP(S) URL or bare public domain/IP. Bare targets use HTTPS.'),
-  "consent": zod.literal(true)
+  "consent": zod.literal(true),
+  "agentReview": zod.boolean().optional().describe('Opt in to an approval-gated follow-up review before the report is published. Every follow-up step still requires its own approval.')
 })
 
 export const CreateUrlScanResponse = zod.object({
@@ -89,7 +90,8 @@ export const CreateUrlScanResponse = zod.object({
  */
 export const CreateEmailScanBody = zod.object({
   "file": zod.instanceof(Blob),
-  "consent": zod.literal(true)
+  "consent": zod.literal(true),
+  "agentReview": zod.boolean().optional().describe('Opt in to an approval-gated follow-up review before the report is published. Every follow-up step still requires its own approval.')
 })
 
 export const CreateEmailScanResponse = zod.object({
@@ -120,11 +122,11 @@ export const getScanResponseLatestProgressPlanMax = 6;
 export const GetScanResponse = zod.object({
   "scanId": zod.uuid(),
   "type": zod.enum(['url', 'email', 'email_link']),
-  "status": zod.enum(['queued', 'running', 'completed', 'failed', 'cancelled']),
+  "status": zod.enum(['queued', 'running', 'awaiting_review', 'completed', 'failed', 'cancelled']),
   "createdAt": zod.coerce.date(),
   "expiresAt": zod.coerce.date(),
   "latestProgress": zod.object({
-  "stage": zod.enum(['validating', 'queued', 'starting_sandbox', 'navigating', 'collecting_evidence', 'http_failed', 'browser_inspection', 'browser_completed', 'browser_skipped', 'browser_blocked', 'browser_failed', 'analyzing_email', 'building_report', 'completed', 'failed']),
+  "stage": zod.enum(['validating', 'queued', 'starting_sandbox', 'navigating', 'collecting_evidence', 'http_failed', 'browser_inspection', 'browser_completed', 'browser_skipped', 'browser_blocked', 'browser_failed', 'analyzing_email', 'building_report', 'awaiting_review', 'completed', 'failed']),
   "message": zod.string().max(getScanResponseLatestProgressMessageMax),
   "completedSteps": zod.int().min(getScanResponseLatestProgressCompletedStepsMin),
   "totalSteps": zod.int().min(1),
@@ -148,7 +150,7 @@ export const CancelScanParams = zod.object({
 export const CancelScanResponse = zod.object({
   "scanId": zod.uuid(),
   "cancelled": zod.boolean(),
-  "status": zod.enum(['queued', 'running', 'completed', 'failed', 'cancelled'])
+  "status": zod.enum(['queued', 'running', 'awaiting_review', 'completed', 'failed', 'cancelled'])
 })
 
 
@@ -189,6 +191,20 @@ export const getScanReportResponseLinksItemDisplayUrlMax = 300;
 export const getScanReportResponseLinksItemTargetHostMax = 253;
 
 export const getScanReportResponseLinksMax = 50;
+
+export const getScanReportResponseAgentActionsItemTargetHostMax = 253;
+
+export const getScanReportResponseAgentActionsItemFindingsItemTitleMax = 100;
+
+export const getScanReportResponseAgentActionsItemFindingsItemExplanationMax = 500;
+
+export const getScanReportResponseAgentActionsItemFindingsItemSanitizedObservedValueMax = 300;
+
+export const getScanReportResponseAgentActionsItemFindingsItemLimitationsItemMax = 200;
+
+export const getScanReportResponseAgentActionsItemFindingsMax = 25;
+
+export const getScanReportResponseAgentActionsMax = 3;
 
 
 
@@ -236,7 +252,26 @@ export const GetScanReportResponse = zod.object({
   "displayUrl": zod.string().max(getScanReportResponseLinksItemDisplayUrlMax).describe('Sanitized display URL with query values and fragments redacted.'),
   "targetHost": zod.string().max(getScanReportResponseLinksItemTargetHostMax),
   "scanAvailable": zod.boolean()
-})).max(getScanReportResponseLinksMax).optional()
+})).max(getScanReportResponseLinksMax).optional(),
+  "agentActions": zod.array(zod.object({
+  "actionId": zod.uuid(),
+  "tool": zod.enum(['link_metadata_share', 'email_link_visit', 'url_browser_observation']),
+  "status": zod.enum(['running', 'completed', 'skipped', 'blocked', 'failed']),
+  "reasonCode": zod.enum(['declined', 'expired', 'cancelled', 'timed_out', 'insufficient_time', 'link_unavailable', 'browser_not_eligible', 'analysis_failed']).optional(),
+  "targetHost": zod.string().max(getScanReportResponseAgentActionsItemTargetHostMax).optional(),
+  "riskBand": zod.enum(['low', 'moderate', 'high', 'critical', 'inconclusive']).optional(),
+  "findings": zod.array(zod.object({
+  "id": zod.string(),
+  "title": zod.string().max(getScanReportResponseAgentActionsItemFindingsItemTitleMax),
+  "explanation": zod.string().max(getScanReportResponseAgentActionsItemFindingsItemExplanationMax),
+  "severity": zod.enum(['informational', 'low', 'moderate', 'high', 'critical']),
+  "strength": zod.enum(['direct', 'contextual']),
+  "source": zod.enum(['url_navigation', 'browser', 'email_headers', 'email_body', 'attachment_metadata']),
+  "sanitizedObservedValue": zod.string().max(getScanReportResponseAgentActionsItemFindingsItemSanitizedObservedValueMax).nullish(),
+  "limitations": zod.array(zod.string().max(getScanReportResponseAgentActionsItemFindingsItemLimitationsItemMax)).optional()
+})).max(getScanReportResponseAgentActionsItemFindingsMax).optional(),
+  "coverageSufficient": zod.boolean().optional()
+})).max(getScanReportResponseAgentActionsMax).optional().describe('Approval-gated follow-up steps. Shown separately; they never change the risk band.')
 })
 
 
@@ -302,7 +337,10 @@ export const StreamScanEventsResponse = zod.unknown()
 /**
  * Resolves one browser-bound, single-use approval request. The request
  * is validated against the reviewed tool catalog before it can exist.
- * Approval does not authorize another tool or data scope.
+ * Approval does not authorize another tool or data scope. An approved
+ * step is dispatched to the isolated worker using the stored proposal,
+ * never client-supplied arguments. Declining publishes the report from
+ * the completed checks with a visible coverage limitation.
  * @summary Approve or decline one proposed agent action
  */
 export const ResolveAgentApprovalParams = zod.object({
@@ -317,12 +355,17 @@ export const ResolveAgentApprovalBody = zod.object({
 export const ResolveAgentApprovalResponse = zod.object({
   "requestId": zod.uuid(),
   "scanId": zod.uuid(),
-  "status": zod.enum(['approved', 'declined'])
+  "status": zod.enum(['approved', 'declined']),
+  "next": zod.enum(['running', 'finalizing']).optional().describe('running means the approved step was dispatched to the isolated worker; watch agent_action events for its result. finalizing means the report will be published from the completed checks.')
 })
 
 
 /**
- * Requires a completed deterministic scan. The response is a pending proposal; no tool is dispatched.
+ * Requires a review-enabled scan that is paused before its report
+ * (status awaiting_review) and the browser that started it. Returns the
+ * existing pending proposal when one exists. No tool is dispatched until
+ * the proposal is approved. A 409 with code AGENT_REVIEW_COMPLETE means no
+ * further step is available and the report is being finalized.
  * @summary Request one approval-gated follow-up proposal
  */
 export const CreateAgentProposalParams = zod.object({
@@ -333,17 +376,22 @@ export const CreateAgentProposalBody = zod.object({
   "scanType": zod.enum(['url', 'email', 'email_link'])
 })
 
+export const createAgentProposalResponseTargetLabelMax = 253;
+
+
+
 export const CreateAgentProposalResponse = zod.object({
   "requestId": zod.uuid(),
   "scanId": zod.uuid(),
   "proposal": zod.record(zod.string(), zod.unknown()),
   "status": zod.enum(['pending']),
-  "expiresAt": zod.coerce.date()
+  "expiresAt": zod.coerce.date(),
+  "targetLabel": zod.string().max(createAgentProposalResponseTargetLabelMax).optional().describe('Destination host for a proposed email-link visit, taken from the worker\'s own link list.')
 })
 
 
 /**
- * Cancels pending approval prompts for this browser-bound scan.
+ * Cancels pending approval prompts for this browser-bound scan. A paused review then publishes its report from the completed checks.
  * @summary Cancel pending agent approval requests
  */
 export const CancelAgentApprovalsParams = zod.object({
@@ -356,7 +404,8 @@ export const cancelAgentApprovalsResponseCancelledApprovalRequestsMin = 0;
 
 export const CancelAgentApprovalsResponse = zod.object({
   "scanId": zod.uuid(),
-  "cancelledApprovalRequests": zod.int().min(cancelAgentApprovalsResponseCancelledApprovalRequestsMin)
+  "cancelledApprovalRequests": zod.int().min(cancelAgentApprovalsResponseCancelledApprovalRequestsMin),
+  "reviewFinalized": zod.boolean().optional().describe('True when a paused review was told to publish its report from the completed checks.')
 })
 
 

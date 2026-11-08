@@ -10,4 +10,6 @@ export interface AgentCancellationResponse {
   scanId: string;
   /** @minimum 0 */
   cancelledApprovalRequests: number;
+  /** True when a paused review was told to publish its report from the completed checks. */
+  reviewFinalized?: boolean;
 }

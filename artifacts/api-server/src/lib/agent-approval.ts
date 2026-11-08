@@ -20,6 +20,14 @@ export interface AgentApprovalRequest {
   createdAt: number;
   expiresAt: number;
   browserBinding?: string;
+  /** Destination host for an email-link visit, from the worker's link list. */
+  targetLabel?: string;
+}
+
+export interface AgentApprovalCreateOptions {
+  /** Absolute epoch ms; the request never outlives the scan's hard cap. */
+  deadline?: number;
+  targetLabel?: string;
 }
 
 export interface AgentApprovalEvent {
@@ -30,6 +38,7 @@ export interface AgentApprovalEvent {
     proposal: AgentProposal;
     status: AgentApprovalStatus;
     expiresAt: string;
+    targetLabel?: string;
   };
 }
 
@@ -61,16 +70,22 @@ export class AgentApprovalStore {
     scanId: string,
     proposal: AgentProposal,
     browserToken?: string,
+    options: AgentApprovalCreateOptions = {},
   ): AgentApprovalRequest {
     const createdAt = this.now();
+    const lifetimeEnd = createdAt + this.lifetimeMs;
     const request = {
       requestId: randomUUID(),
       scanId,
       proposal,
       status: "pending" as const,
       createdAt,
-      expiresAt: createdAt + this.lifetimeMs,
+      expiresAt:
+        options.deadline !== undefined && Number.isFinite(options.deadline)
+          ? Math.min(lifetimeEnd, options.deadline)
+          : lifetimeEnd,
       ...(browserToken ? { browserBinding: bindBrowser(browserToken) } : {}),
+      ...(options.targetLabel ? { targetLabel: options.targetLabel } : {}),
     };
     this.records.set(request.requestId, request);
     this.publish({ type: "approval_required", data: this.eventData(request) });
@@ -90,6 +105,34 @@ export class AgentApprovalStore {
       listeners.delete(listener);
       if (listeners.size === 0) this.listeners.delete(key);
     };
+  }
+
+  /** The still-pending request for this scan and browser, if any. */
+  findPending(scanId: string, browserToken: string): AgentApprovalRequest | undefined {
+    const binding = bindBrowser(browserToken);
+    for (const request of this.records.values()) {
+      if (request.scanId !== scanId || request.browserBinding !== binding) continue;
+      this.expireIfNeeded(request);
+      if (request.status === "pending") return request;
+    }
+    return undefined;
+  }
+
+  /** Pending requests for a scan, read before cancelling them. */
+  pendingForScan(scanId: string, browserToken?: string): AgentApprovalRequest[] {
+    const result: AgentApprovalRequest[] = [];
+    for (const request of this.records.values()) {
+      if (request.scanId !== scanId) continue;
+      if (
+        request.browserBinding &&
+        (!browserToken || request.browserBinding !== bindBrowser(browserToken))
+      ) {
+        continue;
+      }
+      this.expireIfNeeded(request);
+      if (request.status === "pending") result.push(request);
+    }
+    return result;
   }
 
   get(scanId: string, requestId: string): AgentApprovalRequest | undefined {
@@ -153,7 +196,19 @@ export class AgentApprovalStore {
       proposal: request.proposal,
       status: request.status,
       expiresAt: new Date(request.expiresAt).toISOString(),
+      ...(request.targetLabel ? { targetLabel: request.targetLabel } : {}),
     };
+  }
+
+  /** Drop resolved records older than the hard cap so memory stays bounded. */
+  prune(): void {
+    const cutoff = this.now() - MAX_APPROVAL_LIFETIME_MS * 2;
+    for (const [requestId, request] of this.records) {
+      this.expireIfNeeded(request);
+      if (request.status !== "pending" && request.createdAt < cutoff) {
+        this.records.delete(requestId);
+      }
+    }
   }
 
   private publish(event: AgentApprovalEvent): void {
@@ -174,6 +229,8 @@ export function createAgentApprovalRequest(
   scanId: string,
   proposal: AgentProposal,
   browserToken: string,
+  options: AgentApprovalCreateOptions = {},
 ): AgentApprovalRequest {
-  return agentApprovalStore.create(scanId, proposal, browserToken);
+  agentApprovalStore.prune();
+  return agentApprovalStore.create(scanId, proposal, browserToken, options);
 }

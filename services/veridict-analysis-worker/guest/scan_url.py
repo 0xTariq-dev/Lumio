@@ -893,13 +893,16 @@ async def analyze(job: dict[str, Any]) -> dict[str, Any]:
 
     browser: dict[str, Any] | None = None
     browser_failed = False
+    # An approved follow-up may request the browser check for an HTML page
+    # without scripts; every other eligibility rule still applies.
+    browser_requested = job.get("browserRequested") is True
     if (
         "browser" in task_plan
         and
         static
         and static.get("isHtml")
         and not static.get("oversized")
-        and static.get("scriptCount", 0) > 0
+        and (static.get("scriptCount", 0) > 0 or browser_requested)
         and not redirect_blocked
     ):
         emit({"kind": "progress", "stage": "browser_inspection"})

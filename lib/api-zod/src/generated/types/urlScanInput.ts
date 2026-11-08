@@ -14,4 +14,6 @@ export interface UrlScanInput {
      */
   url: string;
   consent: true;
+  /** Opt in to an approval-gated follow-up review before the report is published. Every follow-up step still requires its own approval. */
+  agentReview?: boolean;
 }

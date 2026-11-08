@@ -12,6 +12,7 @@ export type ScanSnapshotStatus = typeof ScanSnapshotStatus[keyof typeof ScanSnap
 export const ScanSnapshotStatus = {
   queued: 'queued',
   running: 'running',
+  awaiting_review: 'awaiting_review',
   completed: 'completed',
   failed: 'failed',
   cancelled: 'cancelled',

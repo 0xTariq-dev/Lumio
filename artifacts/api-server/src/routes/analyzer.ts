@@ -15,6 +15,8 @@ import {
 } from "@workspace/api-zod";
 import { z } from "zod";
 import {
+  AgentActionResultSchema,
+  ReviewReadyEventSchema,
   cancelWorkerScan,
   fetchWorkerScan,
   fetchWorkerReport,
@@ -24,6 +26,7 @@ import {
   type WorkerHealth,
   type WorkerScanPayload,
 } from "../lib/analysis-worker";
+import { agentReviewRegistry } from "../lib/agent-review";
 import {
   isTerminalAnalysisEvent,
   toPublicWorkerFailureEvent,
@@ -68,6 +71,7 @@ const ScanProgressSchema = z.object({
     "browser_failed",
     "analyzing_email",
     "building_report",
+    "awaiting_review",
     "completed",
     "failed",
   ]),
@@ -166,6 +170,7 @@ const ScanReportSchema = z.object({
     )
     .max(50)
     .optional(),
+  agentActions: z.array(AgentActionResultSchema).max(3).optional(),
   explanationToken: z.string().max(12_000).optional(),
 });
 
@@ -176,8 +181,8 @@ const uploadEml = multer({
   limits: {
     fileSize: MAX_EMAIL_BYTES,
     files: 1,
-    fields: 1,
-    parts: 2,
+    fields: 2,
+    parts: 3,
     fieldNameSize: 40,
     fieldSize: 8,
   },
@@ -323,6 +328,7 @@ function safeProgressMessage(stage: string): string {
     browser_failed: "Browser inspection did not complete; coverage may be reduced.",
     analyzing_email: "Extracting email indicators and links.",
     building_report: "Preparing the evidence report.",
+    awaiting_review: "Waiting for your decision on a follow-up step.",
     completed: "The execution plan completed and the report is ready.",
     failed: "Analysis ended before all planned steps completed.",
   };
@@ -423,6 +429,11 @@ async function createScan(
   if (!reservation.allowed) return;
 
   const scanId = randomUUID();
+  const agentReview = "agentReview" in input && input.agentReview === true;
+  if (agentReview) {
+    // Bind before the worker can pause, so only this browser drives the review.
+    agentReviewRegistry.register(scanId, getOrCreateBrowserToken(req, res));
+  }
   const workerResult = await postWorkerScan({
     ...input,
     scanId,
@@ -548,7 +559,12 @@ router.post("/scans/url", requireReadyWorker, async (req, res) => {
   return createScan(
     req,
     res,
-    { type: "url", url: parsed.data.url, consent: true },
+    {
+      type: "url",
+      url: parsed.data.url,
+      consent: true,
+      agentReview: parsed.data.agentReview === true,
+    },
     CreateUrlScanResponse,
   );
 });
@@ -632,6 +648,7 @@ router.post(
         type: "email",
         emailBase64: file.buffer.toString("base64"),
         consent: true,
+        agentReview: req.body.agentReview === "true",
       },
       CreateEmailScanResponse,
     );
@@ -798,6 +815,16 @@ function parseEventBlock(
         explanationToken: createExplanationToken(safeReport, browserToken),
       },
     };
+  }
+  if (eventName === "review_ready") {
+    const ready = ReviewReadyEventSchema.parse(data);
+    if (ready.scanId !== expectedScanId) {
+      throw new Error("Worker event scan reference mismatch");
+    }
+    return { event: "review_ready", data: { scanId: ready.scanId, deadline: ready.deadline } };
+  }
+  if (eventName === "agent_action") {
+    return { event: "agent_action", data: AgentActionResultSchema.parse(data) };
   }
   if (eventName === "failed") {
     return toPublicWorkerFailureEvent(data);

@@ -387,7 +387,10 @@ paths:
       description: |
         Resolves one browser-bound, single-use approval request. The request
         is validated against the reviewed tool catalog before it can exist.
-        Approval does not authorize another tool or data scope.
+        Approval does not authorize another tool or data scope. An approved
+        step is dispatched to the isolated worker using the stored proposal,
+        never client-supplied arguments. Declining publishes the report from
+        the completed checks with a visible coverage limitation.
       parameters:
         - name: scanId
           in: path
@@ -443,7 +446,12 @@ paths:
       operationId: createAgentProposal
       tags: [analyzer]
       summary: Request one approval-gated follow-up proposal
-      description: Requires a completed deterministic scan. The response is a pending proposal; no tool is dispatched.
+      description: |
+        Requires a review-enabled scan that is paused before its report
+        (status awaiting_review) and the browser that started it. Returns the
+        existing pending proposal when one exists. No tool is dispatched until
+        the proposal is approved. A 409 with code AGENT_REVIEW_COMPLETE means no
+        further step is available and the report is being finalized.
       parameters:
         - name: scanId
           in: path
@@ -470,8 +478,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+        "403":
+          description: The review belongs to another browser session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
         "409":
-          description: Scan is not complete or no proposal is available
+          description: Scan is not awaiting review, a step is running, or no proposal is available
           content:
             application/json:
               schema:
@@ -487,7 +501,7 @@ paths:
       operationId: cancelAgentApprovals
       tags: [analyzer]
       summary: Cancel pending agent approval requests
-      description: Cancels pending approval prompts for this browser-bound scan.
+      description: Cancels pending approval prompts for this browser-bound scan. A paused review then publishes its report from the completed checks.
       parameters:
         - name: scanId
           in: path
@@ -644,6 +658,9 @@ components:
         consent:
           type: boolean
           enum: [true]
+        agentReview:
+          type: boolean
+          description: Opt in to an approval-gated follow-up review before the report is published. Every follow-up step still requires its own approval.
     EmailScanInput:
       type: object
       required: [file, consent]
@@ -655,6 +672,9 @@ components:
         consent:
           type: boolean
           enum: [true]
+        agentReview:
+          type: boolean
+          description: Opt in to an approval-gated follow-up review before the report is published. Every follow-up step still requires its own approval.
     LinkScanConsent:
       type: object
       required: [consent]
@@ -712,6 +732,10 @@ components:
         expiresAt:
           type: string
           format: date-time
+        targetLabel:
+          type: string
+          maxLength: 253
+          description: Destination host for a proposed email-link visit, taken from the worker's own link list.
     AgentApprovalResponse:
       type: object
       required: [requestId, scanId, status]
@@ -725,6 +749,10 @@ components:
         status:
           type: string
           enum: [approved, declined]
+        next:
+          type: string
+          enum: [running, finalizing]
+          description: running means the approved step was dispatched to the isolated worker; watch agent_action events for its result. finalizing means the report will be published from the completed checks.
     AgentCancellationResponse:
       type: object
       required: [scanId, cancelledApprovalRequests]
@@ -735,6 +763,46 @@ components:
         cancelledApprovalRequests:
           type: integer
           minimum: 0
+        reviewFinalized:
+          type: boolean
+          description: True when a paused review was told to publish its report from the completed checks.
+    AgentActionResult:
+      type: object
+      required: [actionId, tool, status]
+      properties:
+        actionId:
+          type: string
+          format: uuid
+        tool:
+          type: string
+          enum: [link_metadata_share, email_link_visit, url_browser_observation]
+        status:
+          type: string
+          enum: [running, completed, skipped, blocked, failed]
+        reasonCode:
+          type: string
+          enum:
+            - declined
+            - expired
+            - cancelled
+            - timed_out
+            - insufficient_time
+            - link_unavailable
+            - browser_not_eligible
+            - analysis_failed
+        targetHost:
+          type: string
+          maxLength: 253
+        riskBand:
+          type: string
+          enum: [low, moderate, high, critical, inconclusive]
+        findings:
+          type: array
+          maxItems: 25
+          items:
+            $ref: "#/components/schemas/ScanFinding"
+        coverageSufficient:
+          type: boolean
     ScanAccepted:
       type: object
       required: [scanId, status, eventsPath, expiresAt]
@@ -761,7 +829,7 @@ components:
           type: boolean
         status:
           type: string
-          enum: [queued, running, completed, failed, cancelled]
+          enum: [queued, running, awaiting_review, completed, failed, cancelled]
     ScanCancellationNotice:
       type: object
       required: [code, message, retryable]
@@ -786,7 +854,7 @@ components:
           enum: [url, email, email_link]
         status:
           type: string
-          enum: [queued, running, completed, failed, cancelled]
+          enum: [queued, running, awaiting_review, completed, failed, cancelled]
         createdAt:
           type: string
           format: date-time
@@ -815,6 +883,7 @@ components:
             - browser_failed
             - analyzing_email
             - building_report
+            - awaiting_review
             - completed
             - failed
         message:
@@ -904,6 +973,12 @@ components:
           maxItems: 50
           items:
             $ref: "#/components/schemas/EmailLink"
+        agentActions:
+          type: array
+          maxItems: 3
+          description: Approval-gated follow-up steps. Shown separately; they never change the risk band.
+          items:
+            $ref: "#/components/schemas/AgentActionResult"
     ScanFinding:
       type: object
       required: [id, title, explanation, severity, strength, source]

@@ -10,4 +10,6 @@ export interface EmailScanInput {
   /** An .eml file, at most 10 MB. */
   file: Blob | File;
   consent: true;
+  /** Opt in to an approval-gated follow-up review before the report is published. Every follow-up step still requires its own approval. */
+  agentReview?: boolean;
 }

@@ -11,17 +11,35 @@ from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from shared.url_policy import URLPolicyError, normalize_public_http_url
 
-from .contracts import EmailLinkScanRequest, EmailScanRequest, URLScanRequest
+from .contracts import (
+    AgentReviewCommand,
+    EmailLinkScanRequest,
+    EmailScanRequest,
+    URLScanRequest,
+)
 from .logging_config import configure_logging
 from .manager import ScanManager
 from .microsandbox_runner import MicrosandboxRunner
 from .settings import WorkerSettings
 
 _logger = configure_logging()
+_REVIEW_COMMAND_ADAPTER = TypeAdapter(AgentReviewCommand)
+_REVIEW_COMMAND_BODY_LIMIT = 4096
+_REVIEW_COMMAND_ERRORS = {
+    "not_found": (404, "SCAN_NOT_FOUND", "The analysis was not found."),
+    "not_reviewing": (409, "REVIEW_NOT_ACTIVE", "This scan is not waiting for a follow-up decision."),
+    "replayed": (409, "AGENT_ACTION_REPLAYED", "This follow-up decision was already used."),
+    "busy": (409, "AGENT_ACTION_BUSY", "A follow-up step is already running."),
+    "limit": (409, "AGENT_ACTION_LIMIT", "The follow-up step limit was reached."),
+    "tool_already_used": (409, "AGENT_ACTION_LIMIT", "This follow-up step already ran."),
+    "tool_not_allowed": (422, "AGENT_TOOL_NOT_ALLOWED", "This follow-up step is not allowed for this scan."),
+    "link_unavailable": (404, "EMAIL_LINK_NOT_AVAILABLE", "This email link is not available."),
+    "browser_not_eligible": (409, "BROWSER_FOLLOW_UP_NOT_ELIGIBLE", "A browser follow-up is not available for this scan."),
+}
 
 
 def _error(status: int, code: str, message: str, *, retryable: bool = False):
@@ -46,6 +64,12 @@ def _operation_for_path(path: str) -> str:
         return "cancel_scan"
     if re.fullmatch(r"/v1/scans/[0-9a-fA-F-]{36}/events", path):
         return "scan_events"
+    if re.fullmatch(r"/v1/scans/[0-9a-fA-F-]{36}/report", path):
+        return "get_report"
+    if re.fullmatch(r"/v1/scans/[0-9a-fA-F-]{36}/review", path):
+        return "get_review"
+    if re.fullmatch(r"/v1/scans/[0-9a-fA-F-]{36}/review/commands", path):
+        return "review_command"
     if re.fullmatch(r"/v1/scans/[0-9a-fA-F-]{36}", path):
         return "get_scan"
     return "not_found"
@@ -191,6 +215,9 @@ def create_app(
             return _error(400, "INVALID_REQUEST", "The request is invalid.")
         if not isinstance(payload, dict):
             return _error(400, "INVALID_REQUEST", "The request is invalid.")
+        if "browserRequested" in payload:
+            # Only the worker itself sets this for an approved follow-up.
+            return _error(400, "INVALID_SCAN_REQUEST", "The scan request is invalid.")
         scan_type = payload.get("type")
         if scan_type not in {"url", "email", "email_link"}:
             return _error(
@@ -282,6 +309,44 @@ def create_app(
         if report is None:
             return _error(404, "REPORT_NOT_FOUND", "The completed report is not available.")
         return report
+
+    @app.get("/v1/scans/{scan_id}/review")
+    async def get_review(scan_id: str):
+        try:
+            normalized_id = str(UUID(scan_id))
+        except ValueError:
+            return _error(404, "SCAN_NOT_FOUND", "The analysis was not found.")
+        view = manager.review_view(normalized_id)
+        if isinstance(view, str):
+            status, code, message = _REVIEW_COMMAND_ERRORS[view]
+            return _error(status, code, message)
+        return view
+
+    @app.post("/v1/scans/{scan_id}/review/commands")
+    async def review_command(scan_id: str, request: Request):
+        try:
+            normalized_id = str(UUID(scan_id))
+        except ValueError:
+            return _error(404, "SCAN_NOT_FOUND", "The analysis was not found.")
+        content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            return _error(415, "UNSUPPORTED_MEDIA_TYPE", "A JSON request is required.")
+        body = bytearray()
+        try:
+            async for chunk in request.stream():
+                body.extend(chunk)
+                if len(body) > _REVIEW_COMMAND_BODY_LIMIT:
+                    return _error(413, "REQUEST_TOO_LARGE", "The request is too large.")
+            command = _REVIEW_COMMAND_ADAPTER.validate_json(bytes(body))
+        except ValidationError:
+            return _error(400, "INVALID_REVIEW_COMMAND", "The follow-up command is invalid.")
+        except Exception:
+            return _error(400, "INVALID_REQUEST", "The request is invalid.")
+        rejection = await manager.submit_review_command(normalized_id, command)
+        if rejection is not None:
+            status, code, message = _REVIEW_COMMAND_ERRORS[rejection]
+            return _error(status, code, message)
+        return JSONResponse(status_code=202, content={"accepted": True})
 
     @app.get("/v1/scans/{scan_id}/events")
     async def scan_events(scan_id: str, request: Request):

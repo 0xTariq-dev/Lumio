@@ -20,6 +20,11 @@ class URLScanRequest(BaseModel):
     type: Literal["url"]
     url: str = Field(min_length=8, max_length=2048)
     consent: Literal[True]
+    # Opt-in, approval-gated agent review before the report is published.
+    agentReview: bool = False
+    # Internal only: set by the worker for an approved browser follow-up.
+    # The public submit endpoint rejects payloads that include it.
+    browserRequested: bool = False
 
 
 class EmailScanRequest(BaseModel):
@@ -29,6 +34,7 @@ class EmailScanRequest(BaseModel):
     type: Literal["email"]
     emailBase64: str = Field(min_length=4, max_length=MAX_EMAIL_BASE64_CHARS)
     consent: Literal[True]
+    agentReview: bool = False
 
     @field_validator("emailBase64")
     @classmethod
@@ -100,6 +106,7 @@ class ProgressPayload(BaseModel):
         "browser_failed",
         "analyzing_email",
         "building_report",
+        "awaiting_review",
         "completed",
         "failed",
     ]
@@ -166,6 +173,63 @@ class EmailLink(BaseModel):
     scanAvailable: bool
 
 
+AgentTool = Literal["link_metadata_share", "email_link_visit", "url_browser_observation"]
+AgentActionStatus = Literal["running", "completed", "skipped", "blocked", "failed"]
+AgentActionReason = Literal[
+    "declined",
+    "expired",
+    "cancelled",
+    "timed_out",
+    "insufficient_time",
+    "link_unavailable",
+    "browser_not_eligible",
+    "analysis_failed",
+]
+MAX_AGENT_ACTIONS = 3
+
+
+class AgentActionResult(BaseModel):
+    """One approval-gated follow-up action and its truthful state."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    actionId: UUID
+    tool: AgentTool
+    status: AgentActionStatus
+    reasonCode: AgentActionReason | None = None
+    targetHost: str | None = Field(default=None, max_length=253)
+    riskBand: Literal["low", "moderate", "high", "critical", "inconclusive"] | None = None
+    findings: list[Finding] = Field(default_factory=list, max_length=25)
+    coverageSufficient: bool | None = None
+
+
+class AgentRunCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command: Literal["run"]
+    actionId: UUID
+    tool: AgentTool
+    linkId: UUID | None = None
+
+
+class AgentSkipCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command: Literal["skip"]
+    actionId: UUID
+    tool: AgentTool
+    reason: Literal["declined", "expired", "cancelled"]
+
+
+class AgentFinalizeCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command: Literal["finalize"]
+
+
+AgentReviewCommand = AgentRunCommand | AgentSkipCommand | AgentFinalizeCommand
+
+
 class ScanReport(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -183,6 +247,9 @@ class ScanReport(BaseModel):
         default=None, min_length=4, max_length=6
     )
     links: list[EmailLink] | None = Field(default=None, max_length=50)
+    agentActions: list[AgentActionResult] | None = Field(
+        default=None, max_length=MAX_AGENT_ACTIONS
+    )
 
 
 class ScanSnapshot(BaseModel):
@@ -190,7 +257,9 @@ class ScanSnapshot(BaseModel):
 
     scanId: UUID
     type: Literal["url", "email", "email_link"]
-    status: Literal["queued", "running", "completed", "failed", "cancelled"]
+    status: Literal[
+        "queued", "running", "awaiting_review", "completed", "failed", "cancelled"
+    ]
     createdAt: datetime
     expiresAt: datetime
     latestProgress: ProgressPayload | None = None

@@ -6,12 +6,18 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './agentActionResult';
+export * from './agentActionResultReasonCode';
+export * from './agentActionResultRiskBand';
+export * from './agentActionResultStatus';
+export * from './agentActionResultTool';
 export * from './agentApprovalDecisionInput';
 export * from './agentApprovalDecisionInputDecision';
 export * from './agentApprovalRequest';
 export * from './agentApprovalRequestProposal';
 export * from './agentApprovalRequestStatus';
 export * from './agentApprovalResponse';
+export * from './agentApprovalResponseNext';
 export * from './agentApprovalResponseStatus';
 export * from './agentCancellationResponse';
 export * from './agentProposalTriggerInput';

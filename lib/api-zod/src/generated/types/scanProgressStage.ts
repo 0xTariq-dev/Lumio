@@ -23,6 +23,7 @@ export const ScanProgressStage = {
   browser_failed: 'browser_failed',
   analyzing_email: 'analyzing_email',
   building_report: 'building_report',
+  awaiting_review: 'awaiting_review',
   completed: 'completed',
   failed: 'failed',
 } as const;

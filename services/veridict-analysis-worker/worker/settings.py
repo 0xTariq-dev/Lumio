@@ -33,6 +33,9 @@ class WorkerSettings:
     sandbox_memory_mib: int = 2048
     browser_timeout_seconds: int = 90
     sandbox_kill_seconds: int = 180
+    # Hard cap for a scan that pauses for agent review, measured from when the
+    # worker starts the scan. Pending approvals and follow-up actions share it.
+    agent_review_cap_seconds: int = 180
     queue_limit: int = 10
     report_ttl_seconds: int = 900
     request_body_limit_bytes: int = 15 * 1024 * 1024
@@ -46,6 +49,9 @@ class WorkerSettings:
             sandbox_cpus=_positive_int("ANALYSIS_SANDBOX_CPUS", 1, maximum=8),
             sandbox_memory_mib=_positive_int(
                 "ANALYSIS_SANDBOX_MEMORY_MIB", 2048, maximum=8192
+            ),
+            agent_review_cap_seconds=_positive_int(
+                "ANALYSIS_AGENT_REVIEW_SECONDS", 180, maximum=180
             ),
         )
 

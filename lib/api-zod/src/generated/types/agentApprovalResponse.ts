@@ -5,10 +5,13 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { AgentApprovalResponseNext } from './agentApprovalResponseNext';
 import type { AgentApprovalResponseStatus } from './agentApprovalResponseStatus';
 
 export interface AgentApprovalResponse {
   requestId: string;
   scanId: string;
   status: AgentApprovalResponseStatus;
+  /** running means the approved step was dispatched to the isolated worker; watch agent_action events for its result. finalizing means the report will be published from the completed checks. */
+  next?: AgentApprovalResponseNext;
 }

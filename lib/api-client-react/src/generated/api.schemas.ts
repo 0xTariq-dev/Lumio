@@ -71,12 +71,16 @@ export interface UrlScanInput {
      */
   url: string;
   consent: true;
+  /** Opt in to an approval-gated follow-up review before the report is published. Every follow-up step still requires its own approval. */
+  agentReview?: boolean;
 }
 
 export interface EmailScanInput {
   /** An .eml file, at most 10 MB. */
   file: Blob | File;
   consent: true;
+  /** Opt in to an approval-gated follow-up review before the report is published. Every follow-up step still requires its own approval. */
+  agentReview?: boolean;
 }
 
 export interface LinkScanConsent {
@@ -137,6 +141,11 @@ export interface AgentApprovalRequest {
   proposal: AgentApprovalRequestProposal;
   status: AgentApprovalRequestStatus;
   expiresAt: string;
+  /**
+     * Destination host for a proposed email-link visit, taken from the worker's own link list.
+     * @maxLength 253
+     */
+  targetLabel?: string;
 }
 
 export type AgentApprovalResponseStatus = typeof AgentApprovalResponseStatus[keyof typeof AgentApprovalResponseStatus];
@@ -147,16 +156,137 @@ export const AgentApprovalResponseStatus = {
   declined: 'declined',
 } as const;
 
+/**
+ * running means the approved step was dispatched to the isolated worker; watch agent_action events for its result. finalizing means the report will be published from the completed checks.
+ */
+export type AgentApprovalResponseNext = typeof AgentApprovalResponseNext[keyof typeof AgentApprovalResponseNext];
+
+
+export const AgentApprovalResponseNext = {
+  running: 'running',
+  finalizing: 'finalizing',
+} as const;
+
 export interface AgentApprovalResponse {
   requestId: string;
   scanId: string;
   status: AgentApprovalResponseStatus;
+  /** running means the approved step was dispatched to the isolated worker; watch agent_action events for its result. finalizing means the report will be published from the completed checks. */
+  next?: AgentApprovalResponseNext;
 }
 
 export interface AgentCancellationResponse {
   scanId: string;
   /** @minimum 0 */
   cancelledApprovalRequests: number;
+  /** True when a paused review was told to publish its report from the completed checks. */
+  reviewFinalized?: boolean;
+}
+
+export type AgentActionResultTool = typeof AgentActionResultTool[keyof typeof AgentActionResultTool];
+
+
+export const AgentActionResultTool = {
+  link_metadata_share: 'link_metadata_share',
+  email_link_visit: 'email_link_visit',
+  url_browser_observation: 'url_browser_observation',
+} as const;
+
+export type AgentActionResultStatus = typeof AgentActionResultStatus[keyof typeof AgentActionResultStatus];
+
+
+export const AgentActionResultStatus = {
+  running: 'running',
+  completed: 'completed',
+  skipped: 'skipped',
+  blocked: 'blocked',
+  failed: 'failed',
+} as const;
+
+export type AgentActionResultReasonCode = typeof AgentActionResultReasonCode[keyof typeof AgentActionResultReasonCode];
+
+
+export const AgentActionResultReasonCode = {
+  declined: 'declined',
+  expired: 'expired',
+  cancelled: 'cancelled',
+  timed_out: 'timed_out',
+  insufficient_time: 'insufficient_time',
+  link_unavailable: 'link_unavailable',
+  browser_not_eligible: 'browser_not_eligible',
+  analysis_failed: 'analysis_failed',
+} as const;
+
+export type AgentActionResultRiskBand = typeof AgentActionResultRiskBand[keyof typeof AgentActionResultRiskBand];
+
+
+export const AgentActionResultRiskBand = {
+  low: 'low',
+  moderate: 'moderate',
+  high: 'high',
+  critical: 'critical',
+  inconclusive: 'inconclusive',
+} as const;
+
+export type ScanFindingSeverity = typeof ScanFindingSeverity[keyof typeof ScanFindingSeverity];
+
+
+export const ScanFindingSeverity = {
+  informational: 'informational',
+  low: 'low',
+  moderate: 'moderate',
+  high: 'high',
+  critical: 'critical',
+} as const;
+
+export type ScanFindingStrength = typeof ScanFindingStrength[keyof typeof ScanFindingStrength];
+
+
+export const ScanFindingStrength = {
+  direct: 'direct',
+  contextual: 'contextual',
+} as const;
+
+export type ScanFindingSource = typeof ScanFindingSource[keyof typeof ScanFindingSource];
+
+
+export const ScanFindingSource = {
+  url_navigation: 'url_navigation',
+  browser: 'browser',
+  email_headers: 'email_headers',
+  email_body: 'email_body',
+  attachment_metadata: 'attachment_metadata',
+} as const;
+
+export interface ScanFinding {
+  id: string;
+  /** @maxLength 100 */
+  title: string;
+  /** @maxLength 500 */
+  explanation: string;
+  severity: ScanFindingSeverity;
+  strength: ScanFindingStrength;
+  source: ScanFindingSource;
+  /**
+     * @maxLength 300
+     * @nullable
+     */
+  sanitizedObservedValue?: string | null;
+  /** @items.maxLength 200 */
+  limitations?: string[];
+}
+
+export interface AgentActionResult {
+  actionId: string;
+  tool: AgentActionResultTool;
+  status: AgentActionResultStatus;
+  reasonCode?: AgentActionResultReasonCode;
+  /** @maxLength 253 */
+  targetHost?: string;
+  riskBand?: AgentActionResultRiskBand;
+  /** @maxItems 25 */
+  findings?: ScanFinding[];
+  coverageSufficient?: boolean;
 }
 
 export type ScanAcceptedStatus = typeof ScanAcceptedStatus[keyof typeof ScanAcceptedStatus];
@@ -180,6 +310,7 @@ export type ScanCancellationStatus = typeof ScanCancellationStatus[keyof typeof 
 export const ScanCancellationStatus = {
   queued: 'queued',
   running: 'running',
+  awaiting_review: 'awaiting_review',
   completed: 'completed',
   failed: 'failed',
   cancelled: 'cancelled',
@@ -220,6 +351,7 @@ export type ScanSnapshotStatus = typeof ScanSnapshotStatus[keyof typeof ScanSnap
 export const ScanSnapshotStatus = {
   queued: 'queued',
   running: 'running',
+  awaiting_review: 'awaiting_review',
   completed: 'completed',
   failed: 'failed',
   cancelled: 'cancelled',
@@ -242,6 +374,7 @@ export const ScanProgressStage = {
   browser_failed: 'browser_failed',
   analyzing_email: 'analyzing_email',
   building_report: 'building_report',
+  awaiting_review: 'awaiting_review',
   completed: 'completed',
   failed: 'failed',
 } as const;
@@ -336,54 +469,6 @@ export const ScanReportRiskBand = {
   critical: 'critical',
   inconclusive: 'inconclusive',
 } as const;
-
-export type ScanFindingSeverity = typeof ScanFindingSeverity[keyof typeof ScanFindingSeverity];
-
-
-export const ScanFindingSeverity = {
-  informational: 'informational',
-  low: 'low',
-  moderate: 'moderate',
-  high: 'high',
-  critical: 'critical',
-} as const;
-
-export type ScanFindingStrength = typeof ScanFindingStrength[keyof typeof ScanFindingStrength];
-
-
-export const ScanFindingStrength = {
-  direct: 'direct',
-  contextual: 'contextual',
-} as const;
-
-export type ScanFindingSource = typeof ScanFindingSource[keyof typeof ScanFindingSource];
-
-
-export const ScanFindingSource = {
-  url_navigation: 'url_navigation',
-  browser: 'browser',
-  email_headers: 'email_headers',
-  email_body: 'email_body',
-  attachment_metadata: 'attachment_metadata',
-} as const;
-
-export interface ScanFinding {
-  id: string;
-  /** @maxLength 100 */
-  title: string;
-  /** @maxLength 500 */
-  explanation: string;
-  severity: ScanFindingSeverity;
-  strength: ScanFindingStrength;
-  source: ScanFindingSource;
-  /**
-     * @maxLength 300
-     * @nullable
-     */
-  sanitizedObservedValue?: string | null;
-  /** @items.maxLength 200 */
-  limitations?: string[];
-}
 
 export type SoftwareEvidenceProduct = typeof SoftwareEvidenceProduct[keyof typeof SoftwareEvidenceProduct];
 
@@ -486,6 +571,11 @@ export interface ScanReport {
   executionPlan?: ScanPlanStep[];
   /** @maxItems 50 */
   links?: EmailLink[];
+  /**
+     * Approval-gated follow-up steps. Shown separately; they never change the risk band.
+     * @maxItems 3
+     */
+  agentActions?: AgentActionResult[];
 }
 
 export interface ApiError {

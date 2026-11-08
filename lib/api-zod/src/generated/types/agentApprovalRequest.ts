@@ -14,4 +14,9 @@ export interface AgentApprovalRequest {
   proposal: AgentApprovalRequestProposal;
   status: AgentApprovalRequestStatus;
   expiresAt: Date;
+  /**
+     * Destination host for a proposed email-link visit, taken from the worker's own link list.
+     * @maxLength 253
+     */
+  targetLabel?: string;
 }

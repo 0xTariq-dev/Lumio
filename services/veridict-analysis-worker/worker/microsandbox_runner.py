@@ -204,6 +204,9 @@ class MicrosandboxRunner:
         else:
             job_data["url"] = request.url
             job_data["browserTimeoutSeconds"] = self.settings.browser_timeout_seconds
+            if request.browserRequested:
+                # Set only for a user-approved browser follow-up.
+                job_data["browserRequested"] = True
         job = json.dumps(
             job_data,
             separators=(",", ":"),
