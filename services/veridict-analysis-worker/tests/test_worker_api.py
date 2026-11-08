@@ -227,9 +227,15 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(b"private=do-not-return", event_body)
             email_report = completed_report(event_body)
             plan = {step["id"]: step["status"] for step in email_report["executionPlan"]}
-            self.assertEqual(plan["http"], "completed")
-            self.assertEqual(plan["static"], "completed")
-            self.assertEqual(plan["browser"], "skipped")
+            self.assertEqual(
+                plan,
+                {
+                    "consent_target": "completed",
+                    "sandbox": "completed",
+                    "email_parse": "completed",
+                    "report": "completed",
+                },
+            )
             self.assertNotIn("pending", plan.values())
 
             status, _, body = await asgi_request(

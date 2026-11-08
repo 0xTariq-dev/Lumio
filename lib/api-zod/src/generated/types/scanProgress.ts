@@ -17,7 +17,7 @@ export interface ScanProgress {
   /** @minimum 1 */
   totalSteps: number;
   /**
-     * @minItems 6
+     * @minItems 4
      * @maxItems 6
      */
   plan?: ScanPlanStep[];

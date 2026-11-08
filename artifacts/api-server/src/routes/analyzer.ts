@@ -63,7 +63,7 @@ const ScanProgressSchema = z.object({
   completedSteps: z.number().int().min(0),
   totalSteps: z.number().int().min(1),
   plan: z.array(z.object({
-    id: z.enum(["consent_target", "sandbox", "http", "static", "browser", "report"]),
+    id: z.enum(["consent_target", "sandbox", "http", "static", "browser", "email_parse", "report"]),
     status: z.enum(["pending", "running", "completed", "skipped", "failed", "blocked"]),
     reasonCode: z.enum([
       "consent_checked",
@@ -77,7 +77,7 @@ const ScanProgressSchema = z.object({
       "earlier_step_failed",
       "analysis_failed",
     ]).optional(),
-  })).length(6).optional(),
+  })).min(4).max(6).optional(),
 });
 
 const ScanReportSchema = z.object({
@@ -115,7 +115,7 @@ const ScanReportSchema = z.object({
     ),
   }),
   executionPlan: z.array(z.object({
-    id: z.enum(["consent_target", "sandbox", "http", "static", "browser", "report"]),
+    id: z.enum(["consent_target", "sandbox", "http", "static", "browser", "email_parse", "report"]),
     status: z.enum(["pending", "running", "completed", "skipped", "failed", "blocked"]),
     reasonCode: z.enum([
       "consent_checked",
@@ -129,7 +129,7 @@ const ScanReportSchema = z.object({
       "earlier_step_failed",
       "analysis_failed",
     ]).optional(),
-  })).length(6).optional(),
+  })).min(4).max(6).optional(),
   links: z
     .array(
       z.object({

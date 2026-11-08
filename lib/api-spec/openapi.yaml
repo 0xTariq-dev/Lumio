@@ -487,7 +487,7 @@ components:
           minimum: 1
         plan:
           type: array
-          minItems: 6
+          minItems: 4
           maxItems: 6
           items:
             $ref: "#/components/schemas/ScanPlanStep"
@@ -497,7 +497,7 @@ components:
       properties:
         id:
           type: string
-          enum: [consent_target, sandbox, http, static, browser, report]
+          enum: [consent_target, sandbox, http, static, browser, email_parse, report]
         status:
           type: string
           enum: [pending, running, completed, skipped, failed, blocked]
@@ -544,7 +544,7 @@ components:
           description: Short-lived token binding redacted evidence to this browser; not part of the exported report.
         executionPlan:
           type: array
-          minItems: 6
+          minItems: 4
           maxItems: 6
           items:
             $ref: "#/components/schemas/ScanPlanStep"

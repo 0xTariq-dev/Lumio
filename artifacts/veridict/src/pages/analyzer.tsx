@@ -57,20 +57,19 @@ const planStepLabels: Record<ScanPlanStep['id'], string> = {
   http: 'Inspect HTTP response and redirects',
   static: 'Review static page signals',
   browser: 'Inspect in a browser when needed',
+  email_parse: 'Parse message headers, body, and links',
   report: 'Assemble the evidence report',
 };
 
 function planStepLabel(id: ScanPlanStep['id'], type: ScanReport['type']) {
   if (type === 'email') {
-    const emailLabels: Record<ScanPlanStep['id'], string> = {
+    const emailLabels: Partial<Record<ScanPlanStep['id'], string>> = {
       consent_target: 'Validate consent and email file',
       sandbox: 'Start an isolated email sandbox',
-      http: 'Review email headers',
-      static: 'Inspect message body and attachment metadata',
-      browser: 'Visit a selected link after consent',
+      email_parse: 'Parse message headers, body, and links',
       report: 'Assemble the evidence report',
     };
-    return emailLabels[id];
+    return emailLabels[id] ?? planStepLabels[id];
   }
   if (type === 'email_link' && id === 'consent_target') {
     return 'Validate selected-link consent and target';

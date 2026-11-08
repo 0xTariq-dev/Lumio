@@ -2,7 +2,10 @@ FROM node:24.22.1-bookworm-slim AS rea-runtime
 
 WORKDIR /opt/rea-runtime
 COPY guest/rea-runtime/package.json guest/rea-runtime/package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+# Replit rewrites lockfile tarball URLs to its private package proxy. Normalize
+# those URLs so this image can be built on the Vultr/production build host.
+RUN sed -i 's#http://package-firewall\.replit\.internal/npm/#https://registry.npmjs.org/#g' package-lock.json \
+    && npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 
 FROM python:3.12-slim-bookworm
 

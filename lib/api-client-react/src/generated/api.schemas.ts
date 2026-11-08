@@ -139,6 +139,7 @@ export const ScanPlanStepId = {
   http: 'http',
   static: 'static',
   browser: 'browser',
+  email_parse: 'email_parse',
   report: 'report',
 } as const;
 
@@ -185,7 +186,7 @@ export interface ScanProgress {
   /** @minimum 1 */
   totalSteps: number;
   /**
-     * @minItems 6
+     * @minItems 4
      * @maxItems 6
      */
   plan?: ScanPlanStep[];
@@ -322,7 +323,7 @@ export interface ScanReport {
      */
   explanationToken?: string;
   /**
-     * @minItems 6
+     * @minItems 4
      * @maxItems 6
      */
   executionPlan?: ScanPlanStep[];

@@ -26,7 +26,7 @@ export interface ScanReport {
      */
   explanationToken?: string;
   /**
-     * @minItems 6
+     * @minItems 4
      * @maxItems 6
      */
   executionPlan?: ScanPlanStep[];

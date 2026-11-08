@@ -49,6 +49,12 @@ PLAN_TEMPLATE = (
     {"id": "browser", "status": "pending"},
     {"id": "report", "status": "pending"},
 )
+EMAIL_PLAN_TEMPLATE = (
+    {"id": "consent_target", "status": "completed", "reasonCode": "consent_checked"},
+    {"id": "sandbox", "status": "pending"},
+    {"id": "email_parse", "status": "pending"},
+    {"id": "report", "status": "pending"},
+)
 URL_PLAN_ACTIONS = ("http", "static", "browser", "report")
 EMAIL_PLAN_ACTIONS = ("email_headers", "email_body", "email_links", "report")
 RESOLVED_PLAN_STATUSES = {"completed", "skipped", "failed", "blocked"}
@@ -239,6 +245,7 @@ class ScanManager:
             record.latest_progress,
             reason_code=reason_code,
             report_data=report_data,
+            scan_type=record.scan_type,
         )
         completed_steps = sum(
             step["status"] in RESOLVED_PLAN_STATUSES for step in plan
@@ -262,8 +269,10 @@ class ScanManager:
         *,
         reason_code: str | None,
         report_data: dict[str, Any] | None = None,
+        scan_type: str = "url",
     ) -> list[dict[str, Any]]:
-        plan = [dict(step) for step in PLAN_TEMPLATE]
+        template = EMAIL_PLAN_TEMPLATE if scan_type == "email" else PLAN_TEMPLATE
+        plan = [dict(step) for step in template]
         steps = {step["id"]: step for step in plan}
 
         def set_step(step_id: str, state: str, reason: str | None = None) -> None:
@@ -292,6 +301,22 @@ class ScanManager:
                 if step["status"] == "pending":
                     step["status"] = "skipped"
                     step["reasonCode"] = "earlier_step_failed"
+            return plan
+
+        if scan_type == "email":
+            if stage == "starting_sandbox":
+                set_step("sandbox", "running")
+            elif stage == "analyzing_email":
+                set_step("sandbox", "completed")
+                set_step("email_parse", "running")
+            elif stage == "building_report":
+                set_step("sandbox", "completed")
+                set_step("email_parse", "completed")
+                set_step("report", "running")
+            elif stage == "completed":
+                set_step("sandbox", "completed")
+                set_step("email_parse", "completed")
+                set_step("report", "completed")
             return plan
 
         if stage == "starting_sandbox":

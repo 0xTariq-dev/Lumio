@@ -59,7 +59,15 @@ AnalysisRequest = URLScanRequest | EmailScanRequest
 class ScanPlanStep(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: Literal["consent_target", "sandbox", "http", "static", "browser", "report"]
+    id: Literal[
+        "consent_target",
+        "sandbox",
+        "http",
+        "static",
+        "browser",
+        "email_parse",
+        "report",
+    ]
     status: Literal["pending", "running", "completed", "skipped", "failed", "blocked"]
     reasonCode: Literal[
         "consent_checked",
@@ -98,7 +106,7 @@ class ProgressPayload(BaseModel):
     message: str = Field(max_length=160)
     completedSteps: int = Field(ge=0)
     totalSteps: int = Field(ge=1)
-    plan: list[ScanPlanStep] = Field(min_length=6, max_length=6)
+    plan: list[ScanPlanStep] = Field(min_length=4, max_length=6)
 
 
 class Finding(BaseModel):
@@ -155,7 +163,9 @@ class ScanReport(BaseModel):
     ruleSetVersion: str = Field(min_length=1, max_length=80)
     findings: list[Finding] = Field(max_length=100)
     coverage: Coverage
-    executionPlan: list[ScanPlanStep] | None = Field(default=None, min_length=6, max_length=6)
+    executionPlan: list[ScanPlanStep] | None = Field(
+        default=None, min_length=4, max_length=6
+    )
     links: list[EmailLink] | None = Field(default=None, max_length=50)
 
 

@@ -97,7 +97,7 @@ export const getScanResponseLatestProgressMessageMax = 160;
 export const getScanResponseLatestProgressCompletedStepsMin = 0;
 
 
-export const getScanResponseLatestProgressPlanMin = 6;
+export const getScanResponseLatestProgressPlanMin = 4;
 export const getScanResponseLatestProgressPlanMax = 6;
 
 
@@ -114,7 +114,7 @@ export const GetScanResponse = zod.object({
   "completedSteps": zod.int().min(getScanResponseLatestProgressCompletedStepsMin),
   "totalSteps": zod.int().min(1),
   "plan": zod.array(zod.object({
-  "id": zod.enum(['consent_target', 'sandbox', 'http', 'static', 'browser', 'report']),
+  "id": zod.enum(['consent_target', 'sandbox', 'http', 'static', 'browser', 'email_parse', 'report']),
   "status": zod.enum(['pending', 'running', 'completed', 'skipped', 'failed', 'blocked']),
   "reasonCode": zod.enum(['consent_checked', 'no_browser_required', 'redirect_blocked', 'not_html', 'static_body_limit', 'http_unavailable', 'http_fetch_failed', 'browser_error', 'earlier_step_failed', 'analysis_failed']).optional()
 })).min(getScanResponseLatestProgressPlanMin).max(getScanResponseLatestProgressPlanMax).optional()

@@ -15,5 +15,6 @@ export const ScanPlanStepId = {
   http: 'http',
   static: 'static',
   browser: 'browser',
+  email_parse: 'email_parse',
   report: 'report',
 } as const;

@@ -4,6 +4,7 @@ import {
   StreamScanExplanationBody,
   StreamScanExplanationParams,
 } from "@workspace/api-zod";
+import { createHmacWindowLimiter } from "../lib/explanation-rate-limit";
 import { getOrCreateBrowserToken } from "../lib/scan-quotas";
 import {
   getVultrInferenceConfig,
@@ -15,6 +16,14 @@ import {
 const router: IRouter = Router();
 const MAX_CONCURRENT_EXPLANATIONS = 2;
 const REQUEST_TIMEOUT_MS = 30_000;
+const EXPLANATION_REQUESTS_PER_IP_PER_MINUTE = 2;
+const explanationRateLimiter = process.env.SESSION_SECRET
+  ? createHmacWindowLimiter(
+      process.env.SESSION_SECRET,
+      EXPLANATION_REQUESTS_PER_IP_PER_MINUTE,
+      60_000,
+    )
+  : undefined;
 
 let activeExplanations = 0;
 const inFlightTokens = new Set<string>();
@@ -71,6 +80,17 @@ router.post(
       return;
     }
 
+    if (!explanationRateLimiter) {
+      sendError(
+        res,
+        503,
+        "EXPLANATION_UNAVAILABLE",
+        "The explanation service is not configured. Your report is unchanged.",
+        true,
+      );
+      return;
+    }
+
     const browserToken = getOrCreateBrowserToken(req, res);
     const claims = verifyExplanationToken(
       body.data.explanationToken,
@@ -83,6 +103,21 @@ router.post(
         403,
         "EXPLANATION_NOT_AUTHORIZED",
         "This explanation request is no longer authorized. Start a new scan.",
+      );
+      return;
+    }
+
+    const rateLimit = explanationRateLimiter(req.ip ?? "");
+    if (!rateLimit.allowed) {
+      if (rateLimit.retryAfterSeconds) {
+        res.setHeader("Retry-After", String(rateLimit.retryAfterSeconds));
+      }
+      sendError(
+        res,
+        429,
+        "EXPLANATION_RATE_LIMITED",
+        "Too many explanation requests. Try again later; your report is unchanged.",
+        true,
       );
       return;
     }
