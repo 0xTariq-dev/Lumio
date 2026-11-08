@@ -14,6 +14,7 @@ services:
       NODE_ENV: production
       PORT: "8080"
       NODE_EXTRA_CA_CERTS: /etc/veridict/worker-ca.pem
+      TRUSTED_PROXY_CIDRS: "10.0.1.0/24,172.30.0.0/24"
     volumes:
       - ${WORKER_CA_FILE:-/etc/veridict/worker-ca.pem}:/etc/veridict/worker-ca.pem:ro
     networks:
@@ -101,5 +102,8 @@ services:
 networks:
   app-private:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
   coolify:
     external: true

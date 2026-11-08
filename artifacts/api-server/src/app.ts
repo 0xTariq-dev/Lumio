@@ -5,7 +5,11 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 
 const app: Express = express();
-app.set("trust proxy", 1);
+const trustedProxyCidrs = process.env.TRUSTED_PROXY_CIDRS
+  ?.split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+app.set("trust proxy", trustedProxyCidrs?.length ? trustedProxyCidrs : 1);
 
 app.use(
   pinoHttp({
