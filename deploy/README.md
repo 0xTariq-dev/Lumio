@@ -10,7 +10,10 @@ fresh Microsandbox microVM. Do not publish the API or worker ports directly.
 The Compose project expects:
 
 - `/etc/veridict/api.env` (`0600`, root-owned): `SESSION_SECRET`,
-  `ANALYSIS_WORKER_URL`, and `ANALYSIS_WORKER_TOKEN`.
+  `DATABASE_URL`, `ANALYSIS_WORKER_URL`, and `ANALYSIS_WORKER_TOKEN`.
+- `/etc/veridict/db.env` (`0600`, root-owned): the Postgres administrator
+  credentials plus a generated `VERIDICT_APP_PASSWORD`. Only the database
+  container receives this file.
 - `/etc/veridict/worker-ca.pem` (`0644`, public CA certificate only): the CA
   that issued the worker's private-network TLS certificate.
 - `VERIDICT_HOST` in the Compose environment: the public HTTPS hostname.
@@ -28,7 +31,16 @@ docker compose -f docker-compose.yml up -d --build
 The web container attaches to the existing `coolify` Docker network so
 Traefik can route HTTPS and request a Let's Encrypt certificate. Only the web
 container is reachable through Traefik; the API remains on the app-private
-Docker network.
+Docker network. PostgreSQL is attached only to an internal database network,
+has no published port, and stores the HMAC-derived quota counters on a
+persistent Docker volume. It does not store scan reports or submitted content.
+
+Initialize the quota table and restricted API database role after Postgres is
+healthy:
+
+```sh
+sh deploy/provision-db.sh
+```
 
 ## Worker host
 
