@@ -71,7 +71,8 @@ export function SummarySpeechControl({
             : "Play summary"}
       </button>
       <p className="text-xs leading-5 text-muted-foreground">
-        Audio is generated only when requested and kept in this tab.
+        Clicking Play sends this summary to Vultr for speech generation. The
+        audio stays in this tab.
       </p>
       {error && (
         <p

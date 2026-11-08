@@ -44,6 +44,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { toast } from 'sonner';
 import { CInputGroup18, type LumioAttachment } from '@/components/examples/c-input-group-18';
 import { AnimatedTagline } from '@/components/animated-tagline';
+import { SummarySpeechControl } from '@/components/summary-speech-control';
 import { motion, useReducedMotion } from 'framer-motion';
 
 type ConversationItem = { scanId: string; type: ScanReport['type']; input: string; displayLabel?: string; note: string; report: ScanReport | null; summary?: string; summaryStatus?: 'idle' | 'streaming' | 'complete' | 'error'; summaryError?: string; error?: string };
@@ -1948,6 +1949,13 @@ function ReportView({
             {summaryText && <div className="mt-4 rounded-md border border-border bg-background p-4" aria-live="polite" data-testid="text-ai-summary">
               <p className="whitespace-pre-wrap break-words text-sm leading-6">{summaryText}</p>
               <p className="mt-3 text-xs leading-5 text-muted-foreground">AI-generated explanation only. Use the deterministic evidence and coverage above as the report; this text does not establish safety.</p>
+              {report.explanationToken && (
+                <SummarySpeechControl
+                  scanId={report.scanId}
+                  explanationToken={report.explanationToken}
+                  summary={summaryText}
+                />
+              )}
             </div>}
           </section>
         )}
