@@ -8,6 +8,7 @@
 import type { EmailLink } from './emailLink';
 import type { ScanCoverage } from './scanCoverage';
 import type { ScanFinding } from './scanFinding';
+import type { ScanPlanStep } from './scanPlanStep';
 import type { ScanReportRiskBand } from './scanReportRiskBand';
 import type { ScanReportType } from './scanReportType';
 
@@ -19,6 +20,11 @@ export interface ScanReport {
   ruleSetVersion: string;
   findings: ScanFinding[];
   coverage: ScanCoverage;
+  /**
+     * @minItems 6
+     * @maxItems 6
+     */
+  executionPlan?: ScanPlanStep[];
   /** @maxItems 50 */
   links?: EmailLink[];
 }

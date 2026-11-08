@@ -47,12 +47,36 @@ const ScanProgressSchema = z.object({
     "starting_sandbox",
     "navigating",
     "collecting_evidence",
+    "http_failed",
+    "browser_inspection",
+    "browser_completed",
+    "browser_skipped",
+    "browser_blocked",
+    "browser_failed",
     "analyzing_email",
     "building_report",
+    "completed",
+    "failed",
   ]),
   message: z.string().max(160),
   completedSteps: z.number().int().min(0),
   totalSteps: z.number().int().min(1),
+  plan: z.array(z.object({
+    id: z.enum(["consent_target", "sandbox", "http", "static", "browser", "report"]),
+    status: z.enum(["pending", "running", "completed", "skipped", "failed", "blocked"]),
+    reasonCode: z.enum([
+      "consent_checked",
+      "no_browser_required",
+      "redirect_blocked",
+      "not_html",
+      "static_body_limit",
+      "http_unavailable",
+      "http_fetch_failed",
+      "browser_error",
+      "earlier_step_failed",
+      "analysis_failed",
+    ]).optional(),
+  })).length(6).optional(),
 });
 
 const ScanReportSchema = z.object({
@@ -89,6 +113,22 @@ const ScanReportSchema = z.object({
       }),
     ),
   }),
+  executionPlan: z.array(z.object({
+    id: z.enum(["consent_target", "sandbox", "http", "static", "browser", "report"]),
+    status: z.enum(["pending", "running", "completed", "skipped", "failed", "blocked"]),
+    reasonCode: z.enum([
+      "consent_checked",
+      "no_browser_required",
+      "redirect_blocked",
+      "not_html",
+      "static_body_limit",
+      "http_unavailable",
+      "http_fetch_failed",
+      "browser_error",
+      "earlier_step_failed",
+      "analysis_failed",
+    ]).optional(),
+  })).length(6).optional(),
   links: z
     .array(
       z.object({
@@ -249,8 +289,16 @@ function safeProgressMessage(stage: string): string {
     starting_sandbox: "Starting a temporary analysis sandbox.",
     navigating: "Inspecting the public page.",
     collecting_evidence: "Collecting technical evidence.",
+    http_failed: "HTTP inspection did not complete; coverage may be reduced.",
+    browser_inspection: "Checking the page in a browser based on observed signals.",
+    browser_completed: "Browser inspection completed.",
+    browser_skipped: "Browser inspection was skipped based on observed signals.",
+    browser_blocked: "Browser inspection was blocked by the scan policy.",
+    browser_failed: "Browser inspection did not complete; coverage may be reduced.",
     analyzing_email: "Extracting email indicators and links.",
     building_report: "Preparing the evidence report.",
+    completed: "The execution plan completed and the report is ready.",
+    failed: "Analysis ended before all planned steps completed.",
   };
   return messages[stage] ?? "Analysis is in progress.";
 }

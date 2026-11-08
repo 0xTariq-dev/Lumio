@@ -16,6 +16,25 @@ class URLScanRequest(BaseModel):
     consent: Literal[True]
 
 
+class ScanPlanStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: Literal["consent_target", "sandbox", "http", "static", "browser", "report"]
+    status: Literal["pending", "running", "completed", "skipped", "failed", "blocked"]
+    reasonCode: Literal[
+        "consent_checked",
+        "no_browser_required",
+        "redirect_blocked",
+        "not_html",
+        "static_body_limit",
+        "http_unavailable",
+        "http_fetch_failed",
+        "browser_error",
+        "earlier_step_failed",
+        "analysis_failed",
+    ] | None = None
+
+
 class ProgressPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -25,12 +44,21 @@ class ProgressPayload(BaseModel):
         "starting_sandbox",
         "navigating",
         "collecting_evidence",
+        "http_failed",
+        "browser_inspection",
+        "browser_completed",
+        "browser_skipped",
+        "browser_blocked",
+        "browser_failed",
         "analyzing_email",
         "building_report",
+        "completed",
+        "failed",
     ]
     message: str = Field(max_length=160)
     completedSteps: int = Field(ge=0)
     totalSteps: int = Field(ge=1)
+    plan: list[ScanPlanStep] = Field(min_length=6, max_length=6)
 
 
 class Finding(BaseModel):
@@ -77,6 +105,7 @@ class ScanReport(BaseModel):
     ruleSetVersion: str = Field(min_length=1, max_length=80)
     findings: list[Finding] = Field(max_length=100)
     coverage: Coverage
+    executionPlan: list[ScanPlanStep] | None = Field(default=None, min_length=6, max_length=6)
     links: list[dict[str, object]] | None = Field(default=None, max_length=50)
 
 

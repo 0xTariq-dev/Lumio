@@ -390,8 +390,16 @@ components:
             - starting_sandbox
             - navigating
             - collecting_evidence
+            - http_failed
+            - browser_inspection
+            - browser_completed
+            - browser_skipped
+            - browser_blocked
+            - browser_failed
             - analyzing_email
             - building_report
+            - completed
+            - failed
         message:
           type: string
           maxLength: 160
@@ -401,6 +409,35 @@ components:
         totalSteps:
           type: integer
           minimum: 1
+        plan:
+          type: array
+          minItems: 6
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/ScanPlanStep"
+    ScanPlanStep:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+          enum: [consent_target, sandbox, http, static, browser, report]
+        status:
+          type: string
+          enum: [pending, running, completed, skipped, failed, blocked]
+        reasonCode:
+          type: string
+          enum:
+            - consent_checked
+            - no_browser_required
+            - redirect_blocked
+            - not_html
+            - static_body_limit
+            - http_unavailable
+            - http_fetch_failed
+            - browser_error
+            - earlier_step_failed
+            - analysis_failed
     ScanReport:
       type: object
       required: [scanId, type, riskBand, completedAt, ruleSetVersion, findings, coverage]
@@ -425,6 +462,12 @@ components:
             $ref: "#/components/schemas/ScanFinding"
         coverage:
           $ref: "#/components/schemas/ScanCoverage"
+        executionPlan:
+          type: array
+          minItems: 6
+          maxItems: 6
+          items:
+            $ref: "#/components/schemas/ScanPlanStep"
         links:
           type: array
           maxItems: 50

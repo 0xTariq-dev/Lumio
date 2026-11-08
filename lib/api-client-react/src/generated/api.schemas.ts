@@ -109,9 +109,63 @@ export const ScanProgressStage = {
   starting_sandbox: 'starting_sandbox',
   navigating: 'navigating',
   collecting_evidence: 'collecting_evidence',
+  http_failed: 'http_failed',
+  browser_inspection: 'browser_inspection',
+  browser_completed: 'browser_completed',
+  browser_skipped: 'browser_skipped',
+  browser_blocked: 'browser_blocked',
+  browser_failed: 'browser_failed',
   analyzing_email: 'analyzing_email',
   building_report: 'building_report',
+  completed: 'completed',
+  failed: 'failed',
 } as const;
+
+export type ScanPlanStepId = typeof ScanPlanStepId[keyof typeof ScanPlanStepId];
+
+
+export const ScanPlanStepId = {
+  consent_target: 'consent_target',
+  sandbox: 'sandbox',
+  http: 'http',
+  static: 'static',
+  browser: 'browser',
+  report: 'report',
+} as const;
+
+export type ScanPlanStepStatus = typeof ScanPlanStepStatus[keyof typeof ScanPlanStepStatus];
+
+
+export const ScanPlanStepStatus = {
+  pending: 'pending',
+  running: 'running',
+  completed: 'completed',
+  skipped: 'skipped',
+  failed: 'failed',
+  blocked: 'blocked',
+} as const;
+
+export type ScanPlanStepReasonCode = typeof ScanPlanStepReasonCode[keyof typeof ScanPlanStepReasonCode];
+
+
+export const ScanPlanStepReasonCode = {
+  consent_checked: 'consent_checked',
+  no_browser_required: 'no_browser_required',
+  redirect_blocked: 'redirect_blocked',
+  not_html: 'not_html',
+  static_body_limit: 'static_body_limit',
+  http_unavailable: 'http_unavailable',
+  http_fetch_failed: 'http_fetch_failed',
+  browser_error: 'browser_error',
+  earlier_step_failed: 'earlier_step_failed',
+  analysis_failed: 'analysis_failed',
+} as const;
+
+export interface ScanPlanStep {
+  id: ScanPlanStepId;
+  status: ScanPlanStepStatus;
+  reasonCode?: ScanPlanStepReasonCode;
+}
 
 export interface ScanProgress {
   stage: ScanProgressStage;
@@ -121,6 +175,11 @@ export interface ScanProgress {
   completedSteps: number;
   /** @minimum 1 */
   totalSteps: number;
+  /**
+     * @minItems 6
+     * @maxItems 6
+     */
+  plan?: ScanPlanStep[];
 }
 
 export interface ScanSnapshot {
@@ -248,6 +307,11 @@ export interface ScanReport {
   ruleSetVersion: string;
   findings: ScanFinding[];
   coverage: ScanCoverage;
+  /**
+     * @minItems 6
+     * @maxItems 6
+     */
+  executionPlan?: ScanPlanStep[];
   /** @maxItems 50 */
   links?: EmailLink[];
 }

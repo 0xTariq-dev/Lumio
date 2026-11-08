@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ScanPlanStep } from './scanPlanStep';
 import type { ScanProgressStage } from './scanProgressStage';
 
 export interface ScanProgress {
@@ -15,4 +16,9 @@ export interface ScanProgress {
   completedSteps: number;
   /** @minimum 1 */
   totalSteps: number;
+  /**
+     * @minItems 6
+     * @maxItems 6
+     */
+  plan?: ScanPlanStep[];
 }

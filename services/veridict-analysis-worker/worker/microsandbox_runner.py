@@ -22,7 +22,7 @@ from microsandbox.types import (
     SecurityProfile,
 )
 
-from .manager import ProgressCallback
+from .manager import ProgressCallback, URL_PLAN_ACTIONS
 from .settings import WorkerSettings
 
 
@@ -31,7 +31,22 @@ _REPORT_OUTPUT_LIMIT = 256 * 1024
 _ALLOWED_GUEST_STAGES = {
     "navigating",
     "collecting_evidence",
+    "http_failed",
+    "browser_inspection",
+    "browser_completed",
+    "browser_skipped",
+    "browser_blocked",
+    "browser_failed",
     "building_report",
+}
+_ALLOWED_REASON_CODES = {
+    "no_browser_required",
+    "redirect_blocked",
+    "not_html",
+    "static_body_limit",
+    "http_unavailable",
+    "http_fetch_failed",
+    "browser_error",
 }
 
 
@@ -103,16 +118,23 @@ class MicrosandboxRunner:
             await Sandbox.remove(name)
 
     async def analyze(
-        self, scan_id: str, url: str, progress: ProgressCallback
+        self,
+        scan_id: str,
+        url: str,
+        task_plan: list[str],
+        progress: ProgressCallback,
     ) -> dict[str, Any]:
         image = self.settings.guest_image
         if not image:
             raise RuntimeError("Guest image is not configured")
+        if tuple(task_plan) != URL_PLAN_ACTIONS:
+            raise ValueError("Unsupported URL task plan")
 
         job = json.dumps(
             {
                 "scanId": scan_id,
                 "url": url,
+                "taskPlan": task_plan,
                 "browserTimeoutSeconds": self.settings.browser_timeout_seconds,
             },
             separators=(",", ":"),
@@ -135,7 +157,10 @@ class MicrosandboxRunner:
             if kind == "progress":
                 stage = message.get("stage")
                 if stage in _ALLOWED_GUEST_STAGES:
-                    await progress(stage)
+                    reason_code = message.get("reasonCode")
+                    if reason_code not in _ALLOWED_REASON_CODES:
+                        reason_code = None
+                    await progress(stage, reason_code)
             elif kind == "report" and isinstance(message.get("report"), dict):
                 report = message["report"]
             elif kind == "error":
