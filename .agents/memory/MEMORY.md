@@ -9,3 +9,4 @@
 - [ReUI Base component additions](reui-base-stepper.md) — For isolated Base UI additions, restore Radix project defaults and keep Base wrappers scoped.
 - [Lumio loading boundaries](lumio-loading-boundaries.md) — Keep the primary analyzer eager; defer only scan-time and explicitly opt-in modules.
 - [Vultr SSH access](veridict-vultr-ssh-access.md) — Use the base64-encoded private-key secret with pinned host keys for strict SSH access.
+- [Apify redirect handling](apify-redirect-handling.md) — Do not rely on Apify web fetch as a no-follow redirect inspector; use a client that stops at the first response.
