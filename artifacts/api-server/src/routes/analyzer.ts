@@ -22,6 +22,7 @@ import {
   type WorkerHealth,
   type WorkerScanPayload,
 } from "../lib/analysis-worker";
+import { normalizeScanTargetInput } from "../lib/normalize-target";
 import {
   getOrCreateBrowserToken,
   QuotaConfigurationError,
@@ -417,13 +418,29 @@ router.get("/analysis/status", async (_req, res) => {
 });
 
 router.post("/scans/url", requireReadyWorker, async (req, res) => {
-  const parsed = CreateUrlScanBody.safeParse(req.body);
+  const body =
+    req.body && typeof req.body === "object" && !Array.isArray(req.body)
+      ? (req.body as Record<string, unknown>)
+      : {};
+  const normalizedUrl = normalizeScanTargetInput(body.url);
+  if (!normalizedUrl) {
+    return sendApiError(
+      res,
+      400,
+      "INVALID_URL_SCAN",
+      "Enter a domain, public IP, or HTTP(S) URL and confirm consent.",
+    );
+  }
+  const parsed = CreateUrlScanBody.safeParse({
+    ...body,
+    url: normalizedUrl,
+  });
   if (!parsed.success) {
     return sendApiError(
       res,
       400,
       "INVALID_URL_SCAN",
-      "Enter one valid HTTP or HTTPS URL and confirm consent.",
+      "Enter a domain, public IP, or HTTP(S) URL and confirm consent.",
     );
   }
   if (!isPublicHttpTarget(parsed.data.url)) {

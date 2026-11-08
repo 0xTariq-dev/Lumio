@@ -51,15 +51,12 @@ export const GetAnalysisStatusResponse = zod.object({
 /**
  * @summary Queue a consented URL scan
  */
-export const createUrlScanBodyUrlMin = 8;
 export const createUrlScanBodyUrlMax = 2048;
 
 
-export const createUrlScanBodyUrlRegExp = new RegExp('^https?:/');
-
 
 export const CreateUrlScanBody = zod.object({
-  "url": zod.url().min(createUrlScanBodyUrlMin).max(createUrlScanBodyUrlMax).regex(createUrlScanBodyUrlRegExp),
+  "url": zod.string().min(1).max(createUrlScanBodyUrlMax).describe('Absolute HTTP(S) URL or bare public domain/IP. Bare targets use HTTPS.'),
   "consent": zod.literal(true)
 })
 

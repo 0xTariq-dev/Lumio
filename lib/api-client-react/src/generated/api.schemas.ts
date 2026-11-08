@@ -47,9 +47,9 @@ export interface AnalysisStatus {
 
 export interface UrlScanInput {
   /**
-     * @minLength 8
+     * Absolute HTTP(S) URL or bare public domain/IP. Bare targets use HTTPS.
+     * @minLength 1
      * @maxLength 2048
-     * @pattern ^https?://
      */
   url: string;
   consent: true;
