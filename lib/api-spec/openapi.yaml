@@ -773,6 +773,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ScanFinding"
+        softwareEvidence:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/SoftwareEvidence"
         coverage:
           $ref: "#/components/schemas/ScanCoverage"
         explanationToken:
@@ -819,6 +824,25 @@ components:
           items:
             type: string
             maxLength: 200
+    SoftwareEvidence:
+      type: object
+      required: [product, evidenceStrength, evidenceSource]
+      properties:
+        product:
+          type: string
+          enum: [WordPress]
+        version:
+          type: [string, "null"]
+          maxLength: 30
+        evidenceStrength:
+          type: string
+          enum: [strong, weak, ambiguous]
+        evidenceSource:
+          type: string
+          enum:
+            - html_generator_and_wp_asset_path
+            - html_generator_only
+            - wp_asset_path_only
     ScanCoverage:
       type: object
       required: [sufficient, checks]

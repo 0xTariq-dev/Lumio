@@ -128,6 +128,19 @@ class Finding(BaseModel):
     limitations: list[str] = Field(default_factory=list, max_length=20)
 
 
+class SoftwareEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    product: Literal["WordPress"]
+    version: str | None = Field(default=None, max_length=30)
+    evidenceStrength: Literal["strong", "weak", "ambiguous"]
+    evidenceSource: Literal[
+        "html_generator_and_wp_asset_path",
+        "html_generator_only",
+        "wp_asset_path_only",
+    ]
+
+
 class CoverageCheck(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -163,6 +176,9 @@ class ScanReport(BaseModel):
     ruleSetVersion: str = Field(min_length=1, max_length=80)
     findings: list[Finding] = Field(max_length=100)
     coverage: Coverage
+    softwareEvidence: list[SoftwareEvidence] = Field(default_factory=list, max_length=10)
+    partial: bool | None = None
+    partialReason: str | None = Field(default=None, max_length=200)
     executionPlan: list[ScanPlanStep] | None = Field(
         default=None, min_length=4, max_length=6
     )

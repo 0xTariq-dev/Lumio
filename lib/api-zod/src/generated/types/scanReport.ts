@@ -11,6 +11,7 @@ import type { ScanFinding } from './scanFinding';
 import type { ScanPlanStep } from './scanPlanStep';
 import type { ScanReportRiskBand } from './scanReportRiskBand';
 import type { ScanReportType } from './scanReportType';
+import type { SoftwareEvidence } from './softwareEvidence';
 
 export interface ScanReport {
   scanId: string;
@@ -19,6 +20,8 @@ export interface ScanReport {
   completedAt: Date;
   ruleSetVersion: string;
   findings: ScanFinding[];
+  /** @maxItems 10 */
+  softwareEvidence?: SoftwareEvidence[];
   coverage: ScanCoverage;
   /**
      * Short-lived token binding redacted evidence to this browser; not part of the exported report.

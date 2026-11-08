@@ -30,6 +30,11 @@ import {
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  LOCAL_KEV_SNAPSHOT,
+  evidenceSourceLabel,
+  matchKevContext,
+} from '@/lib/kev-context';
 
 type InputMode = 'url' | 'email';
 type StreamFailure = { message?: string };
@@ -196,6 +201,53 @@ function escapeHtml(value: unknown) {
   })[char] as string);
 }
 
+function kevStatusLabel(result: ReturnType<typeof matchKevContext>) {
+  if (result.status === 'matched') return 'Possible match in the local snapshot';
+  if (result.status === 'no-match') return 'No matching entry in this snapshot';
+  if (result.reason === 'weak') return 'Evidence was too weak to match';
+  if (result.reason === 'ambiguous') return 'Evidence was ambiguous, so no match was made';
+  if (result.reason === 'unknown-version') return 'No exact version was available for matching';
+  return 'No product and version evidence was available';
+}
+
+function kevContextHtml(report: ScanReport) {
+  if (report.type !== 'url') return '';
+
+  const result = matchKevContext(report.softwareEvidence);
+  const evidence = result.evidence;
+  const matches = result.matches.map((entry) => {
+    const ranges = entry.affectedRanges
+      .map((range) => `${range.from}–${range.through}`)
+      .join('; ');
+    return `
+      <article class="kev-entry">
+        <h3>${escapeHtml(entry.cveId)} · ${escapeHtml(entry.product)}</h3>
+        <p>${escapeHtml(entry.summary)}</p>
+        <p><strong>${escapeHtml(entry.kevStatus)}</strong> · Added ${escapeHtml(entry.kevDate)}</p>
+        <p><strong>Affected releases:</strong> ${escapeHtml(ranges)}</p>
+        <p><strong>Fixed-version reference:</strong> ${escapeHtml(entry.fixedVersion)}. ${escapeHtml(entry.branchNote)}</p>
+        <p class="kev-sources">
+          Sources:
+          <a href="${escapeHtml(entry.cisaUrl)}" target="_blank" rel="noopener noreferrer">CISA alert</a> ·
+          <a href="${escapeHtml(entry.cveRecordUrl)}" target="_blank" rel="noopener noreferrer">CVE record</a> ·
+          <a href="${escapeHtml(entry.vendorAdvisoryUrl)}" target="_blank" rel="noopener noreferrer">WordPress advisory</a>
+        </p>
+      </article>`;
+  }).join('');
+
+  return `
+    <section class="kev-context" aria-labelledby="kev-context-title">
+      <h2 id="kev-context-title">Possible vulnerability context</h2>
+      <p><strong>${escapeHtml(kevStatusLabel(result))}</strong></p>
+      ${evidence
+        ? `<p><strong>Observed:</strong> ${escapeHtml(evidence.product)} ${escapeHtml(evidence.version || 'version unknown')} · ${escapeHtml(evidenceSourceLabel(evidence.evidenceSource))}</p>`
+        : ''}
+      ${matches || '<p>No CVE context was matched from the available exact, strong evidence.</p>'}
+      <p class="muted">Snapshot verified ${escapeHtml(LOCAL_KEV_SNAPSHOT.checkedAt)} · local data, not live.</p>
+      <p class="muted">Possible/unverified; no vulnerability test performed. This context does not change the phishing risk band and a missing match does not establish safety.</p>
+    </section>`;
+}
+
 function reportHtml(report: ScanReport, explanationText = '') {
   const executionPlan = (report.executionPlan ?? []).map((step) => `
     <li><strong>${escapeHtml(planStepLabel(step.id, report.type))}</strong> — ${escapeHtml(planStatusLabel(step.status))}${step.reasonCode ? `: ${escapeHtml(planReasonLabel(step.reasonCode, report.type))}` : ''}</li>`).join('');
@@ -229,6 +281,9 @@ function reportHtml(report: ScanReport, explanationText = '') {
         .meta,.muted{color:#71717a;font-size:13px}
         .band{display:inline-block;border:1px solid #d4d4d8;border-radius:999px;padding:3px 12px;font-weight:650}
         .finding{border-top:1px solid #e4e4e7;padding:18px 0}
+        .kev-context{border-top:1px solid #e4e4e7;margin-top:24px;padding-top:18px;overflow-wrap:anywhere}
+        .kev-entry{margin-top:14px;padding:14px 0;border-top:1px solid #e4e4e7}
+        .kev-sources a{color:#18181b;text-underline-offset:3px}
         .explanation{border-top:1px solid #e4e4e7;margin-top:22px;padding-top:16px}
         pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f4f5;padding:10px;border-radius:8px}
         li{margin:7px 0;overflow-wrap:anywhere}footer{border-top:1px solid #e4e4e7;margin-top:24px;padding-top:16px;color:#71717a;font-size:12px;overflow-wrap:anywhere}
@@ -237,7 +292,7 @@ function reportHtml(report: ScanReport, explanationText = '') {
           @page{margin:14mm}
           html,body{height:auto;background:#fff}
           main{width:100%;max-width:none;margin:0;padding:0;border:0;border-radius:0}
-          .finding,.explanation,footer{break-inside:avoid-page;page-break-inside:avoid}
+          .finding,.kev-entry,.explanation,footer{break-inside:avoid-page;page-break-inside:avoid}
           li{break-inside:avoid-page;page-break-inside:avoid}
         }
       </style>
@@ -246,6 +301,7 @@ function reportHtml(report: ScanReport, explanationText = '') {
       <main><div class="meta">LUMIO · EVIDENCE REPORT</div><h1>${escapeHtml(riskLabel(report.riskBand))} risk</h1><p class="meta">Completed ${escapeHtml(formatDate(report.completedAt))} · Rule set ${escapeHtml(report.ruleSetVersion)}</p>
     ${executionPlan ? `<h2>Execution plan</h2><ol>${executionPlan}</ol>` : ''}
     <h2>Evidence and findings</h2>${findings || '<p>No findings were returned by the analyzer.</p>'}
+    ${kevContextHtml(report)}
     <h2>Coverage</h2><p>${report.coverage.sufficient ? 'Coverage marked sufficient by the analyzer.' : 'Coverage is limited; interpret this result with caution.'}</p><ul>${checks}</ul>
     ${explanation}
     ${links ? `<h2>Links found in email</h2><ul>${links}</ul>` : ''}
@@ -253,6 +309,70 @@ function reportHtml(report: ScanReport, explanationText = '') {
       </main>
     </body>
   </html>`;
+}
+
+function KevContextSection({ report }: { report: ScanReport }) {
+  const result = matchKevContext(report.softwareEvidence);
+
+  return (
+    <section
+      className="mt-6 border-t border-border pt-5"
+      aria-labelledby="kev-context-title"
+      data-testid="section-possible-vulnerability-context"
+    >
+      <div className="flex items-start gap-2">
+        <CircleAlert className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0">
+          <h3 id="kev-context-title" className="text-sm font-semibold">Possible vulnerability context</h3>
+          <p className="mt-1 text-sm font-medium">{kevStatusLabel(result)}</p>
+          {result.evidence ? (
+            <p className="mt-1 break-words text-sm text-muted-foreground" data-testid="kev-observed-evidence">
+              Observed {result.evidence.product} {result.evidence.version || 'version unknown'} · {evidenceSourceLabel(result.evidence.evidenceSource)}
+            </p>
+          ) : (
+            <p className="mt-1 text-sm text-muted-foreground">
+              No exact, strong product/version evidence was available for local matching.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {result.matches.map((entry) => (
+        <article key={entry.cveId} className="mt-4 border-t border-border pt-4" data-testid={`kev-entry-${entry.cveId}`}>
+          <h4 className="text-sm font-semibold">{entry.cveId} · {entry.product}</h4>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">{entry.summary}</p>
+          <dl className="mt-3 space-y-2 text-sm">
+            <div>
+              <dt className="font-medium">{entry.kevStatus}</dt>
+              <dd className="text-muted-foreground">Added {entry.kevDate}</dd>
+            </div>
+            <div>
+              <dt className="font-medium">Affected release ranges</dt>
+              <dd className="break-words text-muted-foreground">
+                {entry.affectedRanges.map((range) => `${range.from}–${range.through}`).join('; ')}
+              </dd>
+            </div>
+            <div>
+              <dt className="font-medium">Fixed-version reference</dt>
+              <dd className="text-muted-foreground">{entry.fixedVersion}. {entry.branchNote}</dd>
+            </div>
+          </dl>
+          <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-sm">
+            <a className="underline underline-offset-4" href={entry.cisaUrl} target="_blank" rel="noopener noreferrer">CISA alert</a>
+            <a className="underline underline-offset-4" href={entry.cveRecordUrl} target="_blank" rel="noopener noreferrer">CVE record</a>
+            <a className="underline underline-offset-4" href={entry.vendorAdvisoryUrl} target="_blank" rel="noopener noreferrer">WordPress advisory</a>
+          </p>
+        </article>
+      ))}
+
+      <p className="mt-3 text-xs leading-5 text-muted-foreground" data-testid="kev-snapshot-freshness">
+        Local snapshot verified {LOCAL_KEV_SNAPSHOT.checkedAt}; it is not live.
+      </p>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+        Possible/unverified; no vulnerability test performed. This context does not change the phishing risk band, and a missing match does not establish safety.
+      </p>
+    </section>
+  );
 }
 
 function ScanProgressLoadingSkeleton() {
@@ -1005,6 +1125,8 @@ function ReportView({
         ) : (
           <div className="rounded-lg border border-dashed border-border bg-muted/20 p-5 text-sm text-muted-foreground" data-testid="empty-report-findings">No findings were returned. This is not a guarantee that the item is safe.</div>
         )}
+
+        {report.type === 'url' && <KevContextSection report={report} />}
 
         <section className="mt-6" aria-labelledby="coverage-title">
           <h3 id="coverage-title" className="text-sm font-semibold">Checks and coverage</h3>

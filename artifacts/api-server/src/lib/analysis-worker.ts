@@ -17,6 +17,19 @@ const WorkerAcceptedSchema = z.object({
   status: z.enum(["queued", "running"]),
 });
 
+const WorkerCancellationSchema = z.object({
+  scanId: z.uuid(),
+  status: z.enum([
+    "queued",
+    "running",
+    "cancelling",
+    "cancelled",
+    "completed",
+    "failed",
+  ]),
+  cancelled: z.boolean(),
+});
+
 const WorkerReportSchema = z.object({
   scanId: z.uuid(),
   type: z.enum(["url", "email", "email_link"]),
@@ -223,6 +236,36 @@ export async function fetchWorkerScan(
     const parsed = GetScanResponse.safeParse(await response.json());
     if (!parsed.success) return { kind: "unavailable" };
     return { kind: "found", scan: parsed.data };
+  } catch {
+    return { kind: "unavailable" };
+  }
+}
+
+export async function cancelWorkerScan(
+  scanId: string,
+): Promise<
+  | { kind: "found"; cancellation: z.infer<typeof WorkerCancellationSchema> }
+  | { kind: "not_found" }
+  | { kind: "unavailable" }
+> {
+  const config = loadWorkerConfig();
+  if (!config) return { kind: "unavailable" };
+
+  try {
+    const response = await fetch(
+      endpointUrl(config.baseUrl, `/v1/scans/${encodeURIComponent(scanId)}/cancel`),
+      {
+        method: "POST",
+        headers: workerHeaders(config.token),
+        signal: AbortSignal.timeout(3_000),
+      },
+    );
+    if (response.status === 404) return { kind: "not_found" };
+    if (!response.ok) return { kind: "unavailable" };
+    const parsed = WorkerCancellationSchema.safeParse(await response.json());
+    return parsed.success
+      ? { kind: "found", cancellation: parsed.data }
+      : { kind: "unavailable" };
   } catch {
     return { kind: "unavailable" };
   }

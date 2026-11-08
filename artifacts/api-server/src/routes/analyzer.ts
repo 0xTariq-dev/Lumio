@@ -15,6 +15,7 @@ import {
 } from "@workspace/api-zod";
 import { z } from "zod";
 import {
+  cancelWorkerScan,
   fetchWorkerScan,
   getAnalysisWorkerHealth,
   openWorkerScanEvents,
@@ -113,6 +114,18 @@ const ScanReportSchema = z.object({
       limitations: z.array(z.string().max(200)).optional(),
     }),
   ),
+  softwareEvidence: z.array(z.object({
+    product: z.literal('WordPress'),
+    version: z.string().max(30).nullable().optional(),
+    evidenceStrength: z.enum(['strong', 'weak', 'ambiguous']),
+    evidenceSource: z.enum([
+      'html_generator_and_wp_asset_path',
+      'html_generator_only',
+      'wp_asset_path_only',
+    ]),
+  })).max(10).optional(),
+  partial: z.boolean().optional(),
+  partialReason: z.string().max(200).optional(),
   coverage: z.object({
     sufficient: z.boolean(),
     checks: z.array(
@@ -651,6 +664,27 @@ router.get("/scans/:scanId", async (req, res) => {
       }
     : result.scan;
   return res.json(scan);
+});
+
+router.post("/scans/:scanId/cancel", async (req, res) => {
+  const params = GetScanParams.safeParse(req.params);
+  if (!params.success) {
+    return sendApiError(res, 400, "INVALID_SCAN_ID", "The scan reference is invalid.");
+  }
+  const result = await cancelWorkerScan(params.data.scanId);
+  if (result.kind === "not_found") {
+    return sendApiError(res, 404, "SCAN_NOT_FOUND", "This scan is no longer available.");
+  }
+  if (result.kind === "unavailable") {
+    return sendApiError(
+      res,
+      503,
+      "ANALYSIS_WORKER_UNAVAILABLE",
+      "The scan could not be cancelled right now.",
+      true,
+    );
+  }
+  return res.json(result.cancellation);
 });
 
 router.post(

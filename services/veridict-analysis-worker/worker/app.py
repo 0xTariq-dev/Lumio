@@ -44,6 +44,8 @@ def _operation_for_path(path: str) -> str:
         return "submit_scan"
     if re.fullmatch(r"/v1/scans/[0-9a-fA-F-]{36}/events", path):
         return "scan_events"
+    if re.fullmatch(r"/v1/scans/[0-9a-fA-F-]{36}/cancel", path):
+        return "cancel_scan"
     if re.fullmatch(r"/v1/scans/[0-9a-fA-F-]{36}", path):
         return "get_scan"
     return "not_found"
@@ -265,6 +267,21 @@ def create_app(
         if report is None:
             return _error(404, "REPORT_NOT_FOUND", "The completed report is not available.")
         return report
+
+    @app.post("/v1/scans/{scan_id}/cancel")
+    async def cancel_scan(scan_id: str):
+        try:
+            normalized_id = str(UUID(scan_id))
+        except ValueError:
+            return _error(404, "SCAN_NOT_FOUND", "The analysis was not found.")
+        status = await manager.cancel_scan(normalized_id)
+        if status is None:
+            return _error(404, "SCAN_NOT_FOUND", "The analysis was not found.")
+        return {
+            "scanId": normalized_id,
+            "status": status,
+            "cancelled": status in {"cancelling", "cancelled"},
+        }
 
     @app.get("/v1/scans/{scan_id}/events")
     async def scan_events(scan_id: str, request: Request):

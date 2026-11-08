@@ -349,6 +349,42 @@ export interface ScanFinding {
   limitations?: string[];
 }
 
+export type SoftwareEvidenceProduct = typeof SoftwareEvidenceProduct[keyof typeof SoftwareEvidenceProduct];
+
+
+export const SoftwareEvidenceProduct = {
+  WordPress: 'WordPress',
+} as const;
+
+export type SoftwareEvidenceEvidenceStrength = typeof SoftwareEvidenceEvidenceStrength[keyof typeof SoftwareEvidenceEvidenceStrength];
+
+
+export const SoftwareEvidenceEvidenceStrength = {
+  strong: 'strong',
+  weak: 'weak',
+  ambiguous: 'ambiguous',
+} as const;
+
+export type SoftwareEvidenceEvidenceSource = typeof SoftwareEvidenceEvidenceSource[keyof typeof SoftwareEvidenceEvidenceSource];
+
+
+export const SoftwareEvidenceEvidenceSource = {
+  html_generator_and_wp_asset_path: 'html_generator_and_wp_asset_path',
+  html_generator_only: 'html_generator_only',
+  wp_asset_path_only: 'wp_asset_path_only',
+} as const;
+
+export interface SoftwareEvidence {
+  product: SoftwareEvidenceProduct;
+  /**
+     * @maxLength 30
+     * @nullable
+     */
+  version?: string | null;
+  evidenceStrength: SoftwareEvidenceEvidenceStrength;
+  evidenceSource: SoftwareEvidenceEvidenceSource;
+}
+
 export type CoverageCheckStatus = typeof CoverageCheckStatus[keyof typeof CoverageCheckStatus];
 
 
@@ -396,6 +432,8 @@ export interface ScanReport {
   completedAt: string;
   ruleSetVersion: string;
   findings: ScanFinding[];
+  /** @maxItems 10 */
+  softwareEvidence?: SoftwareEvidence[];
   coverage: ScanCoverage;
   /**
      * Short-lived token binding redacted evidence to this browser; not part of the exported report.

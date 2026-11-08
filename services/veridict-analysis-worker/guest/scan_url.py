@@ -207,6 +207,72 @@ def _static_evidence(response: Any, final_url: str) -> dict[str, Any]:
             }
         )
     evidence["forms"] = forms
+    generator_values = [
+        _clean_text(value, 120)
+        for value in response.css('meta[name="generator"]::attr(content)').getall()[:10]
+    ]
+    wordpress_generators = [
+        value for value in generator_values if "wordpress" in value.casefold()
+    ]
+    version_pattern = re.compile(
+        r"^WordPress\s+(\d+\.\d+\.\d+)$",
+        re.IGNORECASE,
+    )
+    parsed_versions = [
+        match.group(1)
+        for value in wordpress_generators
+        if (match := version_pattern.fullmatch(value.strip()))
+    ]
+    versions = sorted(set(parsed_versions))
+
+    wordpress_asset_seen = False
+    for raw_asset_url in (
+        response.css("[src]::attr(src)").getall()[:200]
+        + response.css("[href]::attr(href)").getall()[:200]
+    ):
+        try:
+            asset_url = urljoin(final_url, raw_asset_url)
+            if not _same_origin(final_url, asset_url):
+                continue
+            asset_path = urlsplit(asset_url).path.casefold()
+        except (TypeError, ValueError):
+            continue
+        if "/wp-content/" in asset_path or "/wp-includes/" in asset_path:
+            wordpress_asset_seen = True
+            break
+
+    if wordpress_generators or wordpress_asset_seen:
+        if wordpress_generators and wordpress_asset_seen:
+            source = "html_generator_and_wp_asset_path"
+        elif wordpress_generators:
+            source = "html_generator_only"
+        else:
+            source = "wp_asset_path_only"
+
+        malformed_or_conflicting = (
+            len(versions) > 1
+            or len(wordpress_generators) > 1
+            or bool(wordpress_generators and len(parsed_versions) != len(wordpress_generators))
+        )
+        exact_version = versions[0] if len(versions) == 1 else None
+        if malformed_or_conflicting:
+            strength = "ambiguous"
+            exact_version = None
+        elif exact_version and wordpress_generators and wordpress_asset_seen:
+            strength = "strong"
+        else:
+            strength = "weak"
+        evidence["softwareEvidence"] = [
+            {
+                "product": "WordPress",
+                "version": exact_version,
+                "evidenceStrength": strength,
+                "evidenceSource": source,
+            }
+        ]
+    else:
+        evidence["softwareEvidence"] = []
+
     return evidence
 
 
@@ -777,6 +843,11 @@ def _build_report(
         "ruleSetVersion": RULE_SET_VERSION,
         "findings": findings[:MAX_FINDINGS],
         "coverage": {"sufficient": sufficient, "checks": checks},
+        "softwareEvidence": (
+            static.get("softwareEvidence", [])
+            if static and static.get("isHtml")
+            else []
+        ),
     }
     return report
 

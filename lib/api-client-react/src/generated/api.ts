@@ -163,8 +163,6 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
 
   return withQueryKey(query, queryOptions.queryKey);
 }
-
-
 export const getGetAnalysisStatusUrl = () => {
 
 
@@ -259,13 +257,6 @@ export function useGetAnalysisStatus<TData = Awaited<ReturnType<typeof getAnalys
 
   return withQueryKey(query, queryOptions.queryKey);
 }
-
-
-
-
-
-
-
 export const getCreateUrlScanUrl = () => {
 
 
@@ -526,13 +517,6 @@ export function useGetScan<TData = Awaited<ReturnType<typeof getScan>>, TError =
 
   return withQueryKey(query, queryOptions.queryKey);
 }
-
-
-
-
-
-
-
 export const getStreamScanExplanationUrl = (scanId: string,) => {
 
 
@@ -1174,3 +1158,10 @@ export function useStreamAgentApprovalEvents<TData = Awaited<ReturnType<typeof s
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
+

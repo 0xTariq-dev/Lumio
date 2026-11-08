@@ -101,6 +101,19 @@ class FakeAnalyzer:
         }
 
 
+class CancellableAnalyzer(FakeAnalyzer):
+    def __init__(self):
+        super().__init__(block=True)
+        self.cleaned = asyncio.Event()
+
+    async def analyze(self, *_args, **_kwargs):
+        self.started.set()
+        try:
+            await self.release.wait()
+        finally:
+            self.cleaned.set()
+
+
 async def asgi_request(app, method, path, *, headers=None, body=b""):
     raw_headers = [
         (key.lower().encode("latin-1"), value.encode("latin-1"))
@@ -203,6 +216,63 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(status, 401)
             self.assertIn("x-request-id", headers)
             self.assertEqual(json.loads(body)["error"]["code"], "UNAUTHORIZED")
+
+    async def test_active_cancellation_stops_analyzer_and_returns_partial_report(self):
+        analyzer = CancellableAnalyzer()
+        app = create_app(self.settings, analyzer)
+        scan_id = uuid4()
+        async with app.router.lifespan_context(app):
+            status, _, body = await asgi_request(
+                app,
+                "POST",
+                "/v1/scans",
+                headers=request_headers(),
+                body=json.dumps(scan_payload(scan_id)).encode(),
+            )
+            self.assertEqual(status, 200)
+            await analyzer.started.wait()
+
+            status, _, body = await asgi_request(
+                app,
+                "POST",
+                f"/v1/scans/{scan_id}/cancel",
+                headers=request_headers(),
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["status"], "cancelling")
+            self.assertTrue(json.loads(body)["cancelled"])
+            await asyncio.wait_for(analyzer.cleaned.wait(), timeout=1)
+
+            status, _, event_body = await asgi_request(
+                app,
+                "GET",
+                f"/v1/scans/{scan_id}/events",
+                headers={"authorization": f"Bearer {TOKEN}"},
+            )
+            self.assertEqual(status, 200)
+            report = completed_report(event_body)
+            self.assertTrue(report["partial"])
+            self.assertEqual(report["riskBand"], "inconclusive")
+            self.assertEqual(report["findings"], [])
+            self.assertIn("cancelled", report["partialReason"].lower())
+
+            status, _, body = await asgi_request(
+                app,
+                "GET",
+                f"/v1/scans/{scan_id}",
+                headers={"authorization": f"Bearer {TOKEN}"},
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["status"], "cancelled")
+
+            status, _, body = await asgi_request(
+                app,
+                "GET",
+                f"/v1/scans/{scan_id}/report",
+                headers={"authorization": f"Bearer {TOKEN}"},
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(json.loads(body)["partial"])
 
     async def test_accepts_email_and_rejects_unsupported_or_private_targets(self):
         async with self.app.router.lifespan_context(self.app):

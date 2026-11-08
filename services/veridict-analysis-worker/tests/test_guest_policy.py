@@ -32,15 +32,17 @@ PAGE = b"""<!doctype html>
 class _FixtureHandler(BaseHTTPRequestHandler):
     user_agent = None
     referer = None
+    page_body = PAGE
 
     def do_GET(self):
         type(self).user_agent = self.headers.get("User-Agent")
         type(self).referer = self.headers.get("Referer")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(PAGE)))
+        body = type(self).page_body
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(PAGE)
+        self.wfile.write(body)
 
     def log_message(self, *_args):
         return
@@ -67,6 +69,18 @@ class GuestPolicyTests(unittest.TestCase):
     def setUp(self):
         scrapling_log.setLevel(logging.CRITICAL + 1)
 
+    def _fetch_fixture_response(self):
+        local_url = f"http://127.0.0.1:{self.server.server_port}/fixture"
+        with FetcherSession(
+            impersonate=None,
+            stealthy_headers=False,
+            retries=0,
+            timeout=5,
+            follow_redirects=False,
+            headers={"User-Agent": "Veridict URL Scanner/0.1"},
+        ) as fetcher:
+            return fetcher.get(local_url, follow_redirects=False)
+
     def test_browser_url_strips_query_and_fragment_but_keeps_path(self):
         self.assertEqual(
             _browser_url("https://example.com/deep/path?token=private#fragment"),
@@ -82,16 +96,7 @@ class GuestPolicyTests(unittest.TestCase):
         )
 
     def test_static_evidence_and_report_do_not_retain_private_url_content(self):
-        local_url = f"http://127.0.0.1:{self.server.server_port}/fixture"
-        with FetcherSession(
-            impersonate=None,
-            stealthy_headers=False,
-            retries=0,
-            timeout=5,
-            follow_redirects=False,
-            headers={"User-Agent": "Veridict URL Scanner/0.1"},
-        ) as fetcher:
-            response = fetcher.get(local_url, follow_redirects=False)
+        response = self._fetch_fixture_response()
         self.assertEqual(
             _FixtureHandler.user_agent, "Veridict URL Scanner/0.1"
         )
@@ -127,6 +132,86 @@ class GuestPolicyTests(unittest.TestCase):
             "token=private",
         ):
             self.assertNotIn(secret, serialized)
+
+    def test_exact_wordpress_version_and_same_origin_asset_are_strong_evidence(self):
+        original = _FixtureHandler.page_body
+        _FixtureHandler.page_body = b"""<!doctype html>
+        <html><head><meta name="generator" content="WordPress 7.1.3"></head>
+        <body><script src="/wp-includes/js/wp-embed.min.js"></script></body></html>"""
+        self.addCleanup(setattr, _FixtureHandler, "page_body", original)
+
+        static = _static_evidence(
+            self._fetch_fixture_response(),
+            "https://example.com/",
+        )
+        self.assertEqual(
+            static["softwareEvidence"],
+            [
+                {
+                    "product": "WordPress",
+                    "version": "7.1.3",
+                    "evidenceStrength": "strong",
+                    "evidenceSource": "html_generator_and_wp_asset_path",
+                }
+            ],
+        )
+
+        report = _build_report(
+            "f3b3ae2d-9f71-4ae1-9060-384d71281da6",
+            "https://example.com/",
+            static,
+            ["https://example.com/"],
+            False,
+            None,
+            False,
+            False,
+            query_redacted_for_browser=False,
+            static_final_url="https://example.com/",
+        )
+        without_fingerprint = _build_report(
+            "f3b3ae2d-9f71-4ae1-9060-384d71281da6",
+            "https://example.com/",
+            {**static, "softwareEvidence": []},
+            ["https://example.com/"],
+            False,
+            None,
+            False,
+            False,
+            query_redacted_for_browser=False,
+            static_final_url="https://example.com/",
+        )
+        self.assertEqual(report["softwareEvidence"], static["softwareEvidence"])
+        self.assertEqual(report["riskBand"], without_fingerprint["riskBand"])
+
+    def test_wordpress_generator_without_asset_marker_is_weak(self):
+        original = _FixtureHandler.page_body
+        _FixtureHandler.page_body = b"""<!doctype html>
+        <html><head><meta name="generator" content="WordPress 7.1.3"></head>
+        <body><p>Page</p></body></html>"""
+        self.addCleanup(setattr, _FixtureHandler, "page_body", original)
+
+        static = _static_evidence(
+            self._fetch_fixture_response(),
+            "https://example.com/",
+        )
+        self.assertEqual(static["softwareEvidence"][0]["evidenceStrength"], "weak")
+        self.assertEqual(static["softwareEvidence"][0]["version"], "7.1.3")
+
+    def test_unknown_or_conflicting_wordpress_version_is_not_strong(self):
+        original = _FixtureHandler.page_body
+        _FixtureHandler.page_body = b"""<!doctype html>
+        <html><head>
+          <meta name="generator" content="WordPress">
+          <meta name="generator" content="WordPress 7.1.3">
+        </head><body><script src="/wp-content/app.js"></script></body></html>"""
+        self.addCleanup(setattr, _FixtureHandler, "page_body", original)
+
+        static = _static_evidence(
+            self._fetch_fixture_response(),
+            "https://example.com/",
+        )
+        self.assertEqual(static["softwareEvidence"][0]["evidenceStrength"], "ambiguous")
+        self.assertIsNone(static["softwareEvidence"][0]["version"])
 
     def test_static_fetcher_does_not_follow_a_private_redirect(self):
         class RedirectResponse:
