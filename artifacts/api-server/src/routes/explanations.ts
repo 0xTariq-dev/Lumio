@@ -1,5 +1,12 @@
-import { createHash } from "node:crypto";
-import { Router, type IRouter } from "express";
+import { createHash, createHmac } from "node:crypto";
+import { ipKeyGenerator, rateLimit as expressRateLimit } from "express-rate-limit";
+import {
+  Router,
+  type IRouter,
+  type NextFunction,
+  type Request,
+  type Response,
+} from "express";
 import {
   StreamScanExplanationBody,
   StreamScanExplanationParams,
@@ -7,6 +14,8 @@ import {
 import { createHmacWindowLimiter } from "../lib/explanation-rate-limit";
 import { getOrCreateBrowserToken } from "../lib/scan-quotas";
 import {
+  type ExplanationClaims,
+  type VultrInferenceConfig,
   getVultrInferenceConfig,
   verifyExplanationToken,
   streamVultrExplanation,
@@ -24,10 +33,40 @@ const explanationRateLimiter = process.env.SESSION_SECRET
       60_000,
     )
   : undefined;
+const expressExplanationRateLimiter = expressRateLimit({
+  windowMs: 60_000,
+  limit: EXPLANATION_REQUESTS_PER_IP_PER_MINUTE,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const ip = req.ip ?? "";
+    const normalizedIp = ip ? ipKeyGenerator(ip, 56) : "missing-ip";
+    const secret = process.env.SESSION_SECRET ?? "unconfigured";
+    return createHmac("sha256", secret)
+      .update("veridict:express-explanation-limit:v1\0")
+      .update(normalizedIp)
+      .digest("hex");
+  },
+  handler: (_req, res) => {
+    sendError(
+      res,
+      429,
+      "EXPLANATION_RATE_LIMITED",
+      "Too many explanation requests. Try again later; your report is unchanged.",
+      true,
+    );
+  },
+});
 
 let activeExplanations = 0;
 const inFlightTokens = new Set<string>();
 const consumedTokens = new Map<string, number>();
+
+interface AuthorizedExplanation {
+  claims: ExplanationClaims;
+  config: VultrInferenceConfig;
+  tokenId: string;
+}
 
 function sendError(
   res: Parameters<Parameters<IRouter["post"]>[1]>[1],
@@ -37,6 +76,103 @@ function sendError(
   retryable = false,
 ) {
   return res.status(status).json({ code, message, retryable });
+}
+
+function validateExplanationRequest(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  const params = StreamScanExplanationParams.safeParse(req.params);
+  const body = StreamScanExplanationBody.safeParse(req.body);
+  if (!params.success || !body.success) {
+    sendError(
+      res,
+      400,
+      "INVALID_EXPLANATION_REQUEST",
+      "Confirm consent and request an explanation for this report.",
+    );
+    return;
+  }
+
+  if (!process.env.SESSION_SECRET || !explanationRateLimiter) {
+    sendError(
+      res,
+      503,
+      "EXPLANATION_UNAVAILABLE",
+      "The explanation service is not configured. Your report is unchanged.",
+      true,
+    );
+    return;
+  }
+
+  const config = getVultrInferenceConfig();
+  if (!config) {
+    sendError(
+      res,
+      503,
+      "INFERENCE_UNAVAILABLE",
+      "The optional explanation service is not configured. Your report is unchanged.",
+      true,
+    );
+    return;
+  }
+
+  const browserToken = getOrCreateBrowserToken(req, res);
+  const claims = verifyExplanationToken(
+    body.data.explanationToken,
+    params.data.scanId,
+    browserToken,
+  );
+  if (!claims) {
+    sendError(
+      res,
+      403,
+      "EXPLANATION_NOT_AUTHORIZED",
+      "This explanation request is no longer authorized. Start a new scan.",
+    );
+    return;
+  }
+
+  const tokenId = createHash("sha256")
+    .update(body.data.explanationToken)
+    .digest("hex");
+  res.locals.authorizedExplanation = { claims, config, tokenId } satisfies AuthorizedExplanation;
+  next();
+}
+
+function enforceBoundedExplanationRateLimit(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (!process.env.SESSION_SECRET || !explanationRateLimiter || !req.ip) {
+    sendError(
+      res,
+      503,
+      "EXPLANATION_UNAVAILABLE",
+      "The explanation service is not configured. Your report is unchanged.",
+      true,
+    );
+    return;
+  }
+
+  const result = explanationRateLimiter(req.ip);
+  if (!result.allowed) {
+    if (result.retryAfterSeconds) {
+      res.setHeader("Retry-After", String(result.retryAfterSeconds));
+    }
+    sendError(
+      res,
+      429,
+      "EXPLANATION_RATE_LIMITED",
+      "Too many explanation requests. Try again later; your report is unchanged.",
+      true,
+    );
+    return;
+  }
+
+  next();
 }
 
 function writeEvent(
@@ -55,76 +191,12 @@ function pruneConsumedTokens(now: number): void {
 
 router.post(
   "/scans/:scanId/explanation/stream",
+  validateExplanationRequest,
+  enforceBoundedExplanationRateLimit,
+  expressExplanationRateLimiter,
   async (req, res): Promise<void> => {
-    const params = StreamScanExplanationParams.safeParse(req.params);
-    const body = StreamScanExplanationBody.safeParse(req.body);
-    if (!params.success || !body.success) {
-      sendError(
-        res,
-        400,
-        "INVALID_EXPLANATION_REQUEST",
-        "Confirm consent and request an explanation for this report.",
-      );
-      return;
-    }
-
-    const config = getVultrInferenceConfig();
-    if (!config) {
-      sendError(
-        res,
-        503,
-        "INFERENCE_UNAVAILABLE",
-        "The optional explanation service is not configured. Your report is unchanged.",
-        true,
-      );
-      return;
-    }
-
-    if (!explanationRateLimiter) {
-      sendError(
-        res,
-        503,
-        "EXPLANATION_UNAVAILABLE",
-        "The explanation service is not configured. Your report is unchanged.",
-        true,
-      );
-      return;
-    }
-
-    const browserToken = getOrCreateBrowserToken(req, res);
-    const claims = verifyExplanationToken(
-      body.data.explanationToken,
-      params.data.scanId,
-      browserToken,
-    );
-    if (!claims) {
-      sendError(
-        res,
-        403,
-        "EXPLANATION_NOT_AUTHORIZED",
-        "This explanation request is no longer authorized. Start a new scan.",
-      );
-      return;
-    }
-
-    const rateLimit = explanationRateLimiter(req.ip ?? "");
-    if (!rateLimit.allowed) {
-      if (rateLimit.retryAfterSeconds) {
-        res.setHeader("Retry-After", String(rateLimit.retryAfterSeconds));
-      }
-      sendError(
-        res,
-        429,
-        "EXPLANATION_RATE_LIMITED",
-        "Too many explanation requests. Try again later; your report is unchanged.",
-        true,
-      );
-      return;
-    }
-
-    const tokenId = createHash("sha256")
-      .update(body.data.explanationToken)
-      .digest("hex");
+    const { claims, config, tokenId } = res.locals
+      .authorizedExplanation as AuthorizedExplanation;
     pruneConsumedTokens(Date.now());
     if (consumedTokens.has(tokenId) || inFlightTokens.has(tokenId)) {
       sendError(
