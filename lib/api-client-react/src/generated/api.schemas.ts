@@ -124,6 +124,32 @@ export const AgentProposalTriggerInputScanType = {
 
 export interface AgentProposalTriggerInput {
   scanType: AgentProposalTriggerInputScanType;
+  /**
+     * Optional chat model ID selected from the live supported agent catalog.
+     * @maxLength 100
+     * @pattern ^[A-Za-z0-9._:-]+$
+     */
+  modelId?: string;
+}
+
+export interface AgentChatModel {
+  /** @maxLength 100 */
+  id: string;
+  /** @maxLength 80 */
+  label: string;
+  /** @maxLength 160 */
+  description: string;
+}
+
+export interface AgentModelCatalog {
+  /** @maxItems 4 */
+  models: AgentChatModel[];
+  /**
+     * @maxLength 100
+     * @nullable
+     */
+  defaultModelId: string | null;
+  inferenceEnabled: boolean;
 }
 
 export type AgentApprovalRequestProposal = { [key: string]: unknown };

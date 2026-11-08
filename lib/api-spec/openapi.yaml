@@ -441,6 +441,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /agent/models:
+    get:
+      operationId: getAgentModelCatalog
+      tags: [analyzer]
+      summary: List supported chat models for approval-gated agent proposals
+      responses:
+        "200":
+          description: Supported models currently available in the Vultr catalog
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentModelCatalog"
+        "503":
+          description: The provider model catalog is temporarily unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /scans/{scanId}/agent/proposals:
     post:
       operationId: createAgentProposal
@@ -713,6 +731,38 @@ components:
         scanType:
           type: string
           enum: [url, email, email_link]
+        modelId:
+          type: string
+          maxLength: 100
+          pattern: "^[A-Za-z0-9._:-]+$"
+          description: Optional chat model ID selected from the live supported agent catalog.
+    AgentChatModel:
+      type: object
+      required: [id, label, description]
+      properties:
+        id:
+          type: string
+          maxLength: 100
+        label:
+          type: string
+          maxLength: 80
+        description:
+          type: string
+          maxLength: 160
+    AgentModelCatalog:
+      type: object
+      required: [models, defaultModelId, inferenceEnabled]
+      properties:
+        models:
+          type: array
+          maxItems: 4
+          items:
+            $ref: "#/components/schemas/AgentChatModel"
+        defaultModelId:
+          type: ["string", "null"]
+          maxLength: 100
+        inferenceEnabled:
+          type: boolean
     AgentApprovalRequest:
       type: object
       required: [requestId, scanId, proposal, status, expiresAt]

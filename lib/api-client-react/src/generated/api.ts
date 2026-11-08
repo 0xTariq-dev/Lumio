@@ -29,6 +29,7 @@ import type {
   AgentApprovalRequest,
   AgentApprovalResponse,
   AgentCancellationResponse,
+  AgentModelCatalog,
   AgentProposalTriggerInput,
   AnalysisStatus,
   ApiError,
@@ -1103,6 +1104,107 @@ export const useResolveAgentApproval = <TError = ErrorType<ApiError>,
       > => {
       return useMutation(getResolveAgentApprovalMutationOptions(options), queryClient);
     }
+
+export const getGetAgentModelCatalogUrl = () => {
+
+
+
+
+  return `/api/agent/models`
+}
+
+/**
+ * @summary List supported chat models for approval-gated agent proposals
+ */
+export const getAgentModelCatalog = async ( options?: Parameters<typeof customFetch>[1]): Promise<AgentModelCatalog> => {
+
+  return customFetch<AgentModelCatalog>(getGetAgentModelCatalogUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAgentModelCatalogQueryKey = () => {
+    return [
+    `/api/agent/models`
+    ] as const;
+    }
+
+
+export const getGetAgentModelCatalogQueryOptions = <TData = Awaited<ReturnType<typeof getAgentModelCatalog>>, TError = ErrorType<ApiError>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentModelCatalog>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAgentModelCatalogQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentModelCatalog>>> = ({ signal }) => getAgentModelCatalog({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAgentModelCatalog>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetAgentModelCatalogQueryResult = NonNullable<Awaited<ReturnType<typeof getAgentModelCatalog>>>
+export type GetAgentModelCatalogQueryError = ErrorType<ApiError>
+
+
+export function useGetAgentModelCatalog<TData = Awaited<ReturnType<typeof getAgentModelCatalog>>, TError = ErrorType<ApiError>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentModelCatalog>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAgentModelCatalog>>,
+          TError,
+          Awaited<ReturnType<typeof getAgentModelCatalog>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAgentModelCatalog<TData = Awaited<ReturnType<typeof getAgentModelCatalog>>, TError = ErrorType<ApiError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentModelCatalog>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getAgentModelCatalog>>,
+          TError,
+          Awaited<ReturnType<typeof getAgentModelCatalog>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetAgentModelCatalog<TData = Awaited<ReturnType<typeof getAgentModelCatalog>>, TError = ErrorType<ApiError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentModelCatalog>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary List supported chat models for approval-gated agent proposals
+ */
+
+export function useGetAgentModelCatalog<TData = Awaited<ReturnType<typeof getAgentModelCatalog>>, TError = ErrorType<ApiError>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getAgentModelCatalog>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetAgentModelCatalogQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getCreateAgentProposalUrl = (scanId: string,) => {
 

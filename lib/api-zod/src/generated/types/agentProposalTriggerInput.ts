@@ -9,4 +9,10 @@ import type { AgentProposalTriggerInputScanType } from './agentProposalTriggerIn
 
 export interface AgentProposalTriggerInput {
   scanType: AgentProposalTriggerInputScanType;
+  /**
+     * Optional chat model ID selected from the live supported agent catalog.
+     * @maxLength 100
+     * @pattern ^[A-Za-z0-9._:-]+$
+     */
+  modelId?: string;
 }

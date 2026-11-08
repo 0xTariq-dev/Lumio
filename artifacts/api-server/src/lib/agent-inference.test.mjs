@@ -67,6 +67,29 @@ test("parses a structured proposal and validates it before returning", async () 
   if (result.ok) assert.equal(result.requiresApproval, true);
 });
 
+test("uses the selected Qwen model with thinking disabled for the bounded proposal", async () => {
+  const result = await requestAgentProposal(
+    { ...config, model: "qwen3.8-flash-next" },
+    report,
+    { scanType: "url", hasSelectedEmailLink: false },
+    async (_url, init) => {
+      const body = JSON.parse(init.body);
+      assert.equal(body.model, "qwen3.8-flash-next");
+      assert.deepEqual(body.chat_template_kwargs, { enable_thinking: false });
+      assert.equal(init.signal instanceof AbortSignal, true);
+      return responseFor(JSON.stringify({
+        kind: "tool",
+        tool: "url_browser_observation",
+        target: "current_scan",
+        purpose: "Inspect browser behavior after baseline evidence.",
+        requestedFields: ["browser_metadata"],
+        sendRedactedExcerpt: false,
+      }));
+    },
+  );
+  assert.equal(result.ok, true);
+});
+
 test("rejects model output that requests an unreviewed tool", async () => {
   await assert.rejects(
     requestAgentProposal(

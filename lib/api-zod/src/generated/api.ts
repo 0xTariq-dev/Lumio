@@ -361,6 +361,32 @@ export const ResolveAgentApprovalResponse = zod.object({
 
 
 /**
+ * @summary List supported chat models for approval-gated agent proposals
+ */
+export const getAgentModelCatalogResponseModelsItemIdMax = 100;
+
+export const getAgentModelCatalogResponseModelsItemLabelMax = 80;
+
+export const getAgentModelCatalogResponseModelsItemDescriptionMax = 160;
+
+export const getAgentModelCatalogResponseModelsMax = 4;
+
+export const getAgentModelCatalogResponseDefaultModelIdMax = 100;
+
+
+
+export const GetAgentModelCatalogResponse = zod.object({
+  "models": zod.array(zod.object({
+  "id": zod.string().max(getAgentModelCatalogResponseModelsItemIdMax),
+  "label": zod.string().max(getAgentModelCatalogResponseModelsItemLabelMax),
+  "description": zod.string().max(getAgentModelCatalogResponseModelsItemDescriptionMax)
+})).max(getAgentModelCatalogResponseModelsMax),
+  "defaultModelId": zod.string().max(getAgentModelCatalogResponseDefaultModelIdMax).nullable(),
+  "inferenceEnabled": zod.boolean()
+})
+
+
+/**
  * Requires a review-enabled scan that is paused before its report
  * (status awaiting_review) and the browser that started it. Returns the
  * existing pending proposal when one exists. No tool is dispatched until
@@ -372,8 +398,15 @@ export const CreateAgentProposalParams = zod.object({
   "scanId": zod.uuid()
 })
 
+export const createAgentProposalBodyModelIdMax = 100;
+
+
+export const createAgentProposalBodyModelIdRegExp = new RegExp('^[A-Za-z0-9._:-]+$');
+
+
 export const CreateAgentProposalBody = zod.object({
-  "scanType": zod.enum(['url', 'email', 'email_link'])
+  "scanType": zod.enum(['url', 'email', 'email_link']),
+  "modelId": zod.string().max(createAgentProposalBodyModelIdMax).regex(createAgentProposalBodyModelIdRegExp).optional().describe('Optional chat model ID selected from the live supported agent catalog.')
 })
 
 export const createAgentProposalResponseTargetLabelMax = 253;

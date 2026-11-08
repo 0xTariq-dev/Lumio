@@ -95,6 +95,9 @@ export async function requestAgentProposal(
         stream: false,
         max_completion_tokens: 220,
         temperature: 0,
+        ...(config.model.startsWith("qwen3.8-")
+          ? { chat_template_kwargs: { enable_thinking: false } }
+          : {}),
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           {
@@ -103,6 +106,7 @@ export async function requestAgentProposal(
           },
         ],
       }),
+      signal: AbortSignal.timeout(30_000),
     },
   );
   if (!response.ok) {

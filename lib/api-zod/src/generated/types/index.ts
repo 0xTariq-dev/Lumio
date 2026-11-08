@@ -20,6 +20,8 @@ export * from './agentApprovalResponse';
 export * from './agentApprovalResponseNext';
 export * from './agentApprovalResponseStatus';
 export * from './agentCancellationResponse';
+export * from './agentChatModel';
+export * from './agentModelCatalog';
 export * from './agentProposalTriggerInput';
 export * from './agentProposalTriggerInputScanType';
 export * from './analysisStatus';

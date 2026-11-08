@@ -12,6 +12,7 @@ import {
   useCancelScan,
   getGetScanReportQueryKey,
   useCreateAgentProposal,
+  useGetAgentModelCatalog,
   useResolveAgentApproval,
   useCancelAgentApprovals,
 } from '@workspace/api-client-react';
@@ -480,6 +481,9 @@ export default function AnalyzerPage() {
   const statusQuery = useGetAnalysisStatus({
     query: { queryKey: getGetAnalysisStatusQueryKey(), refetchInterval: 15000 },
   });
+  const agentModelCatalogQuery = useGetAgentModelCatalog({
+    query: { staleTime: 5 * 60 * 1000, retry: 1 },
+  });
   const createUrl = useCreateUrlScan();
   const createEmail = useCreateEmailScan();
   const createSelectedLink = useCreateSelectedEmailLinkScan();
@@ -501,10 +505,16 @@ export default function AnalyzerPage() {
   const [approvalRequest, setApprovalRequest] = useState<AgentApprovalRequest | null>(null);
   const [approvalError, setApprovalError] = useState('');
   const [agentReviewOptIn, setAgentReviewOptIn] = useState(false);
+  const [selectedAgentModelId, setSelectedAgentModelId] = useState('');
   const [reviewDeadline, setReviewDeadline] = useState<string | null>(null);
   const [liveActions, setLiveActions] = useState<AgentActionResult[]>([]);
   const [reviewNote, setReviewNote] = useState('');
   const reviewInFlightRef = useRef(false);
+  const agentModels = agentModelCatalogQuery.data?.models ?? [];
+  const activeAgentModelId = agentModels.some((model) => model.id === selectedAgentModelId)
+    ? selectedAgentModelId
+    : agentModelCatalogQuery.data?.defaultModelId ?? '';
+  const activeAgentModel = agentModels.find((model) => model.id === activeAgentModelId);
   const [sessionConsent, setSessionConsent] = useState(() => {
     try { return sessionStorage.getItem('lumio-session-consent') === 'yes'; } catch { return false; }
   });
@@ -1380,7 +1390,13 @@ export default function AnalyzerPage() {
     const proposalGeneration = generationRef.current;
     setApprovalError('');
     createAgentProposal.mutate(
-      { scanId, data: { scanType: type } },
+      {
+        scanId,
+        data: {
+          scanType: type,
+          ...(activeAgentModelId ? { modelId: activeAgentModelId } : {}),
+        },
+      },
       {
         onSuccess: (request) => {
           if (proposalGeneration !== generationRef.current) {
@@ -1552,7 +1568,8 @@ export default function AnalyzerPage() {
               {busy && !activeReport && reviewDeadline && (
                 <AgentReviewPanel deadline={reviewDeadline} approvalRequest={approvalRequest} actions={liveActions}
                   pending={createAgentProposal.isPending || resolveAgentApprovalMutation.isPending || cancelAgentApprovals.isPending}
-                  error={approvalError} note={reviewNote} onResolve={resolveAgentApproval} onSkip={skipAgentReview} />
+                  error={approvalError} note={reviewNote} selectedModelLabel={activeAgentModel?.label ?? null}
+                  onResolve={resolveAgentApproval} onSkip={skipAgentReview} />
               )}
               {activeReport && <div className="mt-2"><ReportView report={activeReport} onExport={exportReport} emailLinks={emailLinks}
                 onPrint={printReport} selectedLinkIds={selectedLinkIds} setSelectedLinkIds={setSelectedLinkIds} onOpenBatch={() => setBatchDialogOpen(true)}
@@ -1571,6 +1588,44 @@ export default function AnalyzerPage() {
                   data-testid="checkbox-agent-review" className="mt-0.5 size-4 shrink-0 accent-foreground" />
                 <span><strong className="font-medium text-foreground">Ask me before follow-up checks.</strong> Before the report is ready, Lumio may propose up to three extra steps, such as visiting one email link. Nothing runs without your approval, and the pause lasts at most 3 minutes.</span>
               </label>
+              {agentReviewOptIn && (
+                <div className="mx-auto mb-3 grid max-w-3xl gap-2 px-1 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] sm:items-end">
+                  <label htmlFor="agent-chat-model" className="grid gap-1.5 text-xs font-medium">
+                    <span>Agent chat model</span>
+                    <select
+                      id="agent-chat-model"
+                      value={activeAgentModelId}
+                      disabled={
+                        busy ||
+                        agentModelCatalogQuery.isLoading ||
+                        !agentModelCatalogQuery.data?.inferenceEnabled ||
+                        agentModels.length === 0
+                      }
+                      onChange={(event) => setSelectedAgentModelId(event.target.value)}
+                      aria-describedby="agent-chat-model-help"
+                      data-testid="select-agent-model"
+                      className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-sm font-normal text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {agentModels.length
+                        ? agentModels.map((model) => (
+                            <option key={model.id} value={model.id}>{model.label}</option>
+                          ))
+                        : <option value="">No supported models available</option>}
+                    </select>
+                  </label>
+                  <p id="agent-chat-model-help" className="text-xs leading-5 text-muted-foreground" role="status">
+                    {agentModelCatalogQuery.isLoading
+                      ? 'Loading Vultr chat models…'
+                      : agentModelCatalogQuery.isError
+                        ? 'The model catalog is unavailable. The scan can continue, but AI-assisted link choices will stay off.'
+                        : !agentModelCatalogQuery.data?.inferenceEnabled
+                          ? 'Vultr agent inference is disabled here. Other approved follow-up checks remain available.'
+                          : agentModels.length === 0
+                            ? 'No supported chat models are currently listed. Other approved follow-up checks remain available.'
+                            : `${activeAgentModel?.description ?? 'Choose a supported chat model.'} Used only after you separately approve sharing redacted email-link details; it cannot change the risk rating.`}
+                  </p>
+                </div>
+              )}
               <CInputGroup18
                 message={chatNote}
                 attachment={attachment}
@@ -1659,7 +1714,7 @@ function BatchEvidence({ report, title, summary, summaryStatus, summaryError }: 
       {summaryStatus === 'streaming' && <p className="mt-4 text-xs text-muted-foreground" role="status">Preparing the optional AI summary…</p>}
       {summaryError && <p className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-xs leading-5 text-muted-foreground" role="status">{summaryError} The deterministic report is unchanged.</p>}
       {summary && <section className="mt-4 rounded-lg border border-border bg-muted/20 p-3" aria-label="Optional AI summary"><h5 className="text-xs font-semibold">Optional AI summary</h5><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{summary}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">This text is an explanation only. It does not change the deterministic report or establish safety.</p></section>}
-      {attachments.length > 0 && <section className="mt-4 rounded-lg border border-border bg-muted/20 p-3"><h5 className="text-xs font-semibold">Attachment metadata only</h5><p className="mt-1 text-xs leading-5 text-muted-foreground">Attachment contents were not opened or analyzed.</p>{attachments.map((finding) => <p key={finding.id} className="mt-2 text-xs">{finding.title}{finding.sanitizedObservedValue ? ` · ${finding.sanitizedObservedValue}` : ''}</p>)}</section>}
+      {attachments.length > 0 && <section className="mt-4 rounded-lg border border-border bg-muted/20 p-3"><h5 className="text-xs font-semibold">Attachment header check</h5><p className="mt-1 text-xs leading-5 text-muted-foreground">Metadata is checked. Within MIME limits, the first 16 header bytes are checked for common file markers. Full contents are not parsed, decompressed, or executed.</p>{attachments.map((finding) => <p key={finding.id} className="mt-2 text-xs">{finding.title}{finding.sanitizedObservedValue ? ` · ${finding.sanitizedObservedValue}` : ''}</p>)}</section>}
     </article>
   );
 }
@@ -1807,8 +1862,8 @@ function ReportView({
 
         {attachments.length > 0 && (
           <section className="mt-6 rounded-lg border border-border bg-muted/20 p-4" aria-labelledby="attachment-title" data-testid="section-attachment-metadata">
-            <h3 id="attachment-title" className="text-sm font-semibold">Attachment metadata only</h3>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">Attachment contents were not opened or analyzed. These details are metadata supplied by the report.</p>
+            <h3 id="attachment-title" className="text-sm font-semibold">Attachment header check</h3>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">Metadata is checked. Within MIME limits, the first 16 header bytes are checked for common file markers. Full contents are not parsed, decompressed, or executed.</p>
             <ul className="mt-3 space-y-2">{attachments.map((finding) => <li key={finding.id} className="text-sm"><span className="font-medium">{finding.title}</span>{finding.sanitizedObservedValue && <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{finding.sanitizedObservedValue}</p>}</li>)}</ul>
           </section>
         )}
@@ -1899,6 +1954,7 @@ function AgentReviewPanel({
   pending,
   error,
   note,
+  selectedModelLabel,
   onResolve,
   onSkip,
 }: {
@@ -1908,6 +1964,7 @@ function AgentReviewPanel({
   pending: boolean;
   error: string;
   note: string;
+  selectedModelLabel: string | null;
   onResolve: (decision: 'approve' | 'decline') => void;
   onSkip: () => void;
 }) {
@@ -1946,7 +2003,7 @@ function AgentReviewPanel({
           {purpose && <p className="mt-1 text-muted-foreground">{purpose}</p>}
           {approvalRequest.targetLabel && <p className="mt-2 break-all text-xs"><span className="font-medium">Destination host:</span> {approvalRequest.targetLabel}</p>}
           {isShare ? (
-            <p className="mt-3 text-xs leading-5 text-muted-foreground">Only each link's host, path and visible text are sent; queries, fragments and secret-looking values are removed. Vultr's retention and training terms are not verified. If you don't share, the report uses the checks already finished.</p>
+            <p className="mt-3 text-xs leading-5 text-muted-foreground">Only each link's host, path and visible text are sent to Vultr's {selectedModelLabel ?? 'selected chat model'}; queries, fragments and secret-looking values are removed. Vultr's retention and training terms are not verified. If you don't share, the report uses the checks already finished.</p>
           ) : (
             <p className="mt-3 text-xs leading-5 text-muted-foreground">Runs once in the isolated worker. Its result is listed separately and does not change the risk band of the first checks.</p>
           )}

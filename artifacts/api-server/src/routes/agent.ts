@@ -1,5 +1,9 @@
 import { Router, type IRouter } from "express";
 import { z } from "zod";
+import {
+  CreateAgentProposalBody,
+  GetAgentModelCatalogResponse,
+} from "@workspace/api-zod";
 import { getOrCreateBrowserToken } from "../lib/scan-quotas";
 import {
   agentApprovalStore,
@@ -22,6 +26,11 @@ import {
 } from "../lib/agent-orchestration";
 import { agentReviewRegistry } from "../lib/agent-review";
 import { getVultrInferenceConfig } from "../lib/serverless-inference";
+import {
+  defaultAgentChatModelId,
+  getAvailableAgentChatModels,
+  isKnownAgentChatModelId,
+} from "../lib/agent-model-catalog";
 import { requestAgentProposal } from "../lib/agent-inference";
 import { logger } from "../lib/logger";
 
@@ -34,9 +43,35 @@ const scanParamsSchema = z.object({ scanId: z.uuid() });
 const approvalDecisionSchema = z.object({
   decision: z.enum(["approve", "decline"]),
 }).strict();
-const proposalTriggerSchema = z.object({
-  scanType: z.enum(["url", "email", "email_link"]),
-}).strict();
+
+router.get("/agent/models", async (req, res): Promise<void> => {
+  try {
+    const models = await getAvailableAgentChatModels();
+    const config = getVultrInferenceConfig();
+    const response = GetAgentModelCatalogResponse.parse({
+      models,
+      defaultModelId: defaultAgentChatModelId(models, config?.model),
+      inferenceEnabled:
+        process.env.VERIDICT_AGENT_INFERENCE_ENABLED === "true" &&
+        Boolean(config) &&
+        models.length > 0,
+    });
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.json(response);
+  } catch (error) {
+    req.log.warn(
+      { errorType: error instanceof Error ? error.name : "unknown" },
+      "Unable to load the Vultr agent model catalog",
+    );
+    sendError(
+      res,
+      503,
+      "AGENT_MODEL_CATALOG_UNAVAILABLE",
+      "Agent chat models are temporarily unavailable.",
+      true,
+    );
+  }
+});
 
 router.get("/scans/:scanId/agent/events", (req, res) => {
   const params = scanParamsSchema.safeParse(req.params);
@@ -109,9 +144,28 @@ async function finalizeReview(scanId: string): Promise<boolean> {
 
 async function buildReviewProposal(
   review: WorkerReview,
+  selectedModelId?: string,
 ): Promise<AgentProposalValidation | "finish"> {
   const config = getVultrInferenceConfig();
-  const inferenceEnabled = process.env.VERIDICT_AGENT_INFERENCE_ENABLED === "true" && Boolean(config);
+  const inferenceConfigured =
+    process.env.VERIDICT_AGENT_INFERENCE_ENABLED === "true" && Boolean(config);
+  let selectedModelAvailable = false;
+  if (
+    inferenceConfigured &&
+    selectedModelId &&
+    isKnownAgentChatModelId(selectedModelId)
+  ) {
+    try {
+      selectedModelAvailable = (await getAvailableAgentChatModels())
+        .some((model) => model.id === selectedModelId);
+    } catch (error) {
+      logger.warn(
+        { errorType: error instanceof Error ? error.name : "unknown" },
+        "Agent model catalog unavailable; using local follow-up planning",
+      );
+    }
+  }
+  const inferenceEnabled = inferenceConfigured && selectedModelAvailable;
   const step = nextReviewStep({
     scanType: review.type,
     linkCandidates: review.linkCandidates,
@@ -132,11 +186,15 @@ async function buildReviewProposal(
 
   // visit_link: Vultr chooses from the redacted list only after the user
   // approved sharing it; otherwise the deterministic local planner picks.
-  if (inferenceEnabled && config && review.linkContext?.length) {
+  if (inferenceEnabled && config && selectedModelId && review.linkContext?.length) {
     try {
-      return await requestAgentProposal(config, review.report, context, fetch, {
-        linkContext: review.linkContext,
-      });
+      return await requestAgentProposal(
+        { ...config, model: selectedModelId },
+        review.report,
+        context,
+        fetch,
+        { linkContext: review.linkContext },
+      );
     } catch (error) {
       logger.warn(
         { errorType: error instanceof Error ? error.name : "unknown" },
@@ -150,13 +208,21 @@ async function buildReviewProposal(
 
 router.post("/scans/:scanId/agent/proposals", async (req, res) => {
   const params = scanParamsSchema.safeParse(req.params);
-  const body = proposalTriggerSchema.safeParse(req.body);
+  const body = CreateAgentProposalBody.strict().safeParse(req.body);
   if (!params.success || !body.success) {
     return sendError(
       res,
       400,
       "INVALID_AGENT_PROPOSAL_REQUEST",
       "The scan type is required to continue analysis.",
+    );
+  }
+  if (body.data.modelId && !isKnownAgentChatModelId(body.data.modelId)) {
+    return sendError(
+      res,
+      400,
+      "INVALID_AGENT_MODEL",
+      "Choose a chat model from the supported agent catalog.",
     );
   }
   const scanId = params.data.scanId;
@@ -218,7 +284,7 @@ router.post("/scans/:scanId/agent/proposals", async (req, res) => {
     );
   }
 
-  const proposal = await buildReviewProposal(review);
+  const proposal = await buildReviewProposal(review, body.data.modelId);
   if (proposal === "finish" || !proposal.ok) {
     await finalizeReview(scanId);
     return sendError(

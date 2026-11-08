@@ -24,6 +24,8 @@ from shared.url_policy import (
 MAX_EMAIL_BYTES = 10 * 1024 * 1024
 MAX_BODY_PART_BYTES = 2 * 1024 * 1024
 MAX_MIME_PARTS = 300
+MAX_ATTACHMENT_SIGNATURE_BYTES = 16
+MAX_ATTACHMENT_PREFIX_SCAN_CHARS = 512
 MAX_LINK_CANDIDATES = 250
 MAX_LINKS = 50
 EXPECTED_TASK_PLAN = ("email_headers", "email_body", "email_links", "report")
@@ -48,6 +50,34 @@ RISKY_ATTACHMENT_EXTENSIONS = {
     ".vbe",
     ".vbs",
 }
+ZIP_ATTACHMENT_EXTENSIONS = {
+    ".docm",
+    ".docx",
+    ".jar",
+    ".odt",
+    ".odp",
+    ".ods",
+    ".pptm",
+    ".pptx",
+    ".xlsm",
+    ".xlsx",
+    ".zip",
+}
+OLE_ATTACHMENT_EXTENSIONS = {".doc", ".msi", ".msg", ".ppt", ".xls"}
+MZ_ATTACHMENT_EXTENSIONS = {
+    ".com",
+    ".cpl",
+    ".dll",
+    ".drv",
+    ".efi",
+    ".exe",
+    ".ocx",
+    ".scr",
+    ".sys",
+}
+BASE64_ALPHABET = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+)
 
 
 def emit(message: dict[str, Any]) -> None:
@@ -97,6 +127,190 @@ def _decoded_text(part: Any) -> str:
         return content.decode("utf-8", errors="replace")
 
 
+def _attachment_header_prefix(part: Any) -> bytes:
+    """Decode at most the first 16 bytes without materializing the attachment."""
+    payload = part.get_payload()
+    if not isinstance(payload, str):
+        return b""
+
+    transfer_encoding = str(part.get("Content-Transfer-Encoding") or "").strip().lower()
+    if transfer_encoding == "base64":
+        encoded: list[str] = []
+        for char in payload[:MAX_ATTACHMENT_PREFIX_SCAN_CHARS]:
+            if char in " \t\r\n":
+                continue
+            if char not in BASE64_ALPHABET:
+                return b""
+            encoded.append(char)
+            if len(encoded) >= ((MAX_ATTACHMENT_SIGNATURE_BYTES + 2) // 3) * 4:
+                break
+
+        complete_length = len(encoded) - (len(encoded) % 4)
+        if complete_length == 0:
+            return b""
+        try:
+            return base64.b64decode("".join(encoded[:complete_length]), validate=True)[
+                :MAX_ATTACHMENT_SIGNATURE_BYTES
+            ]
+        except (binascii.Error, ValueError):
+            return b""
+
+    if transfer_encoding == "quoted-printable":
+        decoded = bytearray()
+        index = 0
+        scan_limit = min(len(payload), MAX_ATTACHMENT_PREFIX_SCAN_CHARS)
+        while index < scan_limit and len(decoded) < MAX_ATTACHMENT_SIGNATURE_BYTES:
+            char = payload[index]
+            if char == "=":
+                if payload.startswith("=\r\n", index):
+                    index += 3
+                    continue
+                if payload.startswith("=\n", index):
+                    index += 2
+                    continue
+                if (
+                    index + 2 < scan_limit
+                    and re.fullmatch(r"[0-9A-Fa-f]{2}", payload[index + 1 : index + 3])
+                ):
+                    decoded.append(int(payload[index + 1 : index + 3], 16))
+                    index += 3
+                    continue
+                return b""
+            codepoint = ord(char)
+            if codepoint > 255:
+                return b""
+            decoded.append(codepoint)
+            index += 1
+        return bytes(decoded)
+
+    if transfer_encoding in {"", "7bit", "8bit", "binary"}:
+        try:
+            return payload[:MAX_ATTACHMENT_SIGNATURE_BYTES].encode(
+                "ascii", errors="surrogateescape"
+            )
+        except UnicodeEncodeError:
+            return b""
+    return b""
+
+
+def _attachment_signature(prefix: bytes) -> str | None:
+    if prefix.startswith(b"%PDF-"):
+        return "pdf"
+    if prefix.startswith((b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")):
+        return "zip"
+    if prefix.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        return "ole"
+    if prefix.startswith(b"MZ"):
+        return "mz"
+    return None
+
+
+def _declared_attachment_kind(extension: str, content_type: str) -> set[str]:
+    kinds: set[str] = set()
+    if extension == ".pdf":
+        kinds.add("pdf")
+    if extension in ZIP_ATTACHMENT_EXTENSIONS:
+        kinds.add("zip")
+    if extension in OLE_ATTACHMENT_EXTENSIONS:
+        kinds.add("ole")
+    if extension in MZ_ATTACHMENT_EXTENSIONS:
+        kinds.add("mz")
+
+    if content_type == "application/pdf":
+        kinds.add("pdf")
+    elif (
+        content_type in {"application/zip", "application/x-zip-compressed", "application/java-archive"}
+        or content_type.startswith("application/vnd.openxmlformats-officedocument.")
+        or content_type.startswith("application/vnd.oasis.opendocument.")
+        or content_type
+        in {
+            "application/vnd.ms-excel.sheet.macroenabled.12",
+            "application/vnd.ms-powerpoint.presentation.macroenabled.12",
+            "application/vnd.ms-word.document.macroenabled.12",
+        }
+    ):
+        kinds.add("zip")
+    elif content_type in {
+        "application/msword",
+        "application/vnd.ms-excel",
+        "application/vnd.ms-outlook",
+        "application/vnd.ms-powerpoint",
+        "application/x-ole-storage",
+        "application/x-olecompoundfile",
+        "application/x-msi",
+    }:
+        kinds.add("ole")
+    elif content_type in {
+        "application/vnd.microsoft.portable-executable",
+        "application/x-dosexec",
+        "application/x-msdownload",
+    }:
+        kinds.add("mz")
+    return kinds
+
+
+def _attachment_signature_findings(
+    attachments: list[tuple[str, str, str | None]],
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    signature_copy = {
+        "pdf": (
+            "PDF header marker detected",
+            "The first 16 attachment bytes matched a PDF header marker. The document was not parsed; this does not establish safety.",
+        ),
+        "zip": (
+            "ZIP container marker detected",
+            "The first 16 attachment bytes matched a ZIP container marker. The archive was not decompressed or inspected.",
+        ),
+        "ole": (
+            "OLE document marker detected",
+            "The first 16 attachment bytes matched an OLE compound-document marker. The document was not parsed.",
+        ),
+        "mz": (
+            "MZ executable-like marker detected",
+            "The first 16 bytes began with MZ. This marker alone does not confirm a valid PE file or indicate malware.",
+        ),
+    }
+    detected = {
+        signature
+        for _extension, _content_type, signature in attachments
+        if signature is not None
+    }
+    for signature in sorted(detected):
+        title, explanation = signature_copy[signature]
+        findings.append(
+            _finding(
+                f"attachment-signature-{signature}",
+                title,
+                explanation,
+                "informational",
+                "attachment_metadata",
+                strength="direct",
+            )
+        )
+
+    mismatch = any(
+        signature is not None
+        and any(
+            declared_kind != signature
+            for declared_kind in _declared_attachment_kind(extension, content_type)
+        )
+        for extension, content_type, signature in attachments
+    )
+    if mismatch:
+        findings.append(
+            _finding(
+                "attachment-signature-mismatch",
+                "Attachment header differs from declared type",
+                "A supported header marker conflicts with the declared filename extension or MIME type. These declarations are untrusted; no file content was parsed.",
+                "moderate",
+                "attachment_metadata",
+                strength="contextual",
+            )
+        )
+    return findings
+
+
 def _domain(value: str) -> str | None:
     for _display_name, address in getaddresses([value]):
         _local, separator, domain = address.rpartition("@")
@@ -111,14 +325,17 @@ def _domain(value: str) -> str | None:
     return None
 
 
-def _message_parts(message: Any) -> tuple[list[str], list[tuple[str, str]], bool]:
+def _message_parts(
+    message: Any,
+) -> tuple[list[str], list[tuple[str, str, str | None]], bool, bool]:
     body_texts: list[str] = []
-    attachment_metadata: list[tuple[str, str]] = []
-    truncated = False
+    attachment_metadata: list[tuple[str, str, str | None]] = []
+    body_truncated = False
+    mime_parts_truncated = False
 
     for index, part in enumerate(message.walk()):
         if index >= MAX_MIME_PARTS:
-            truncated = True
+            mime_parts_truncated = True
             break
         if part.is_multipart():
             continue
@@ -128,7 +345,8 @@ def _message_parts(message: Any) -> tuple[list[str], list[tuple[str, str]], bool
         if filename or disposition == "attachment":
             extension = PurePosixPath(str(filename or "").replace("\\", "/")).suffix.lower()
             content_type = str(part.get_content_type()).lower()[:120]
-            attachment_metadata.append((extension, content_type))
+            signature = _attachment_signature(_attachment_header_prefix(part))
+            attachment_metadata.append((extension, content_type, signature))
             continue
 
         if part.get_content_type() in {"text/plain", "text/html"}:
@@ -136,9 +354,9 @@ def _message_parts(message: Any) -> tuple[list[str], list[tuple[str, str]], bool
             if text:
                 body_texts.append(text)
             elif part.get_payload() is not None:
-                truncated = True
+                body_truncated = True
 
-    return body_texts, attachment_metadata, truncated
+    return body_texts, attachment_metadata, body_truncated, mime_parts_truncated
 
 
 def _link_candidates(body_texts: list[str]) -> list[str]:
@@ -232,7 +450,7 @@ def analyze_email(job: dict[str, Any]) -> dict[str, Any]:
     if not message.keys():
         raise ValueError("The uploaded file is not a readable email")
 
-    body_texts, attachments, body_truncated = _message_parts(message)
+    body_texts, attachments, body_truncated, mime_parts_truncated = _message_parts(message)
     links, private_targets = _safe_links(_link_candidates(body_texts))
     findings: list[dict[str, Any]] = []
 
@@ -272,33 +490,29 @@ def analyze_email(job: dict[str, Any]) -> dict[str, Any]:
         )
 
     if attachments:
-        risky_types = [
-            extension
-            for extension, _content_type in attachments
-            if extension in RISKY_ATTACHMENT_EXTENSIONS
-        ]
+        findings.extend(_attachment_signature_findings(attachments))
+        risky_types = [extension for extension, _content_type, _signature in attachments if extension in RISKY_ATTACHMENT_EXTENSIONS]
         if risky_types:
             findings.append(
                 _finding(
                     "risky-attachment-type",
                     "Potentially risky attachment type",
-                    "Attachment metadata includes a file type that can contain or launch executable content. Attachment contents were not opened.",
+                    "Attachment metadata includes a file type that can contain or launch executable content. Only a bounded header prefix was checked; no content was parsed or executed.",
                     "moderate",
                     "attachment_metadata",
                     strength="contextual",
                 )
             )
-        else:
-            findings.append(
-                _finding(
-                    "attachment-metadata-only",
-                    "Attachments were not opened",
-                    "The message includes attachments. Only metadata was inspected; contents were not opened or executed.",
-                    "informational",
-                    "attachment_metadata",
-                    strength="direct",
-                )
+        findings.append(
+            _finding(
+                "attachment-bounded-inspection",
+                "Attachment checks were bounded",
+                "Metadata was checked, and at most 16 header bytes were inspected for attachments within the MIME-part limit. Full contents were not parsed, decompressed, or executed.",
+                "informational",
+                "attachment_metadata",
+                strength="direct",
             )
+        )
 
     coverage_checks = [
         {"name": "email_headers", "status": "completed"},
@@ -312,11 +526,20 @@ def analyze_email(job: dict[str, Any]) -> dict[str, Any]:
             "status": "completed",
             **(
                 {"reason": "Some message parts exceeded safe parsing limits."}
-                if body_truncated
+                if body_truncated or mime_parts_truncated
                 else {}
             ),
         },
         {"name": "attachment_metadata", "status": "completed"},
+        {
+            "name": "attachment_header_signature",
+            "status": "skipped" if mime_parts_truncated else "completed",
+            **(
+                {"reason": "The MIME part limit was reached; some attachments may not have been checked."}
+                if mime_parts_truncated
+                else {}
+            ),
+        },
         {
             "name": "selected_link_scan",
             "status": "skipped",
@@ -328,7 +551,7 @@ def analyze_email(job: dict[str, Any]) -> dict[str, Any]:
         "type": "email",
         "riskBand": "inconclusive",
         "completedAt": datetime.now(timezone.utc).isoformat(),
-        "ruleSetVersion": "veridict-email-rules-2026-11-08",
+        "ruleSetVersion": "veridict-email-rules-2026-11-08.1",
         "findings": findings[:50],
         "coverage": {"sufficient": False, "checks": coverage_checks},
         "links": links,

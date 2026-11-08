@@ -14,6 +14,7 @@ import {
   GetScanParams,
 } from "@workspace/api-zod";
 import { z } from "zod";
+import { safeAttachmentFindingCopy } from "../lib/attachment-report";
 import {
   AgentActionResultSchema,
   ReviewReadyEventSchema,
@@ -864,10 +865,10 @@ function sanitizeEmailReport(report: ScanReportPayload): ScanReportPayload {
         };
       }
       if (finding.source === "attachment_metadata") {
+        const safeFinding = safeAttachmentFindingCopy(finding.id);
         return {
           ...finding,
-          title: "Attachment metadata indicator",
-          explanation: "Attachment metadata was checked; file contents were not inspected.",
+          ...safeFinding,
           sanitizedObservedValue: null,
           limitations: [],
         };
