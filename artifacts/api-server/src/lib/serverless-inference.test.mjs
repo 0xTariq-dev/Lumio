@@ -33,12 +33,16 @@ const testEnv = {
   VULTR_INFERENCE_API_KEY: "synthetic-test-key",
 };
 
-test("inference config prefers the subscription secret and trims its value", () => {
+test("inference config prefers the canonical secret and trims its value", () => {
   const config = getVultrInferenceConfig({
     INFERECE_SUBSCRIPTION_KEY: "  subscription-test-key  ",
-    VULTR_INFERENCE_API_KEY: "legacy-test-key",
+    VULTR_INFERENCE_API_KEY: "  canonical-test-key  ",
   });
-  assert.equal(config?.apiKey, "subscription-test-key");
+  assert.equal(config?.apiKey, "canonical-test-key");
+  const legacyConfig = getVultrInferenceConfig({
+    INFERECE_SUBSCRIPTION_KEY: "subscription-test-key",
+  });
+  assert.equal(legacyConfig?.apiKey, "subscription-test-key");
 });
 
 test("explanation evidence redacts observed PII and excludes report links", () => {

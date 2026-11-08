@@ -165,8 +165,8 @@ export function getVultrInferenceConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): VultrInferenceConfig | undefined {
   const apiKey =
-    env.INFERECE_SUBSCRIPTION_KEY?.trim() ||
-    env.VULTR_INFERENCE_API_KEY?.trim();
+    env.VULTR_INFERENCE_API_KEY?.trim() ||
+    env.INFERECE_SUBSCRIPTION_KEY?.trim();
   if (!apiKey || apiKey.length < 16) return undefined;
   const model = env.VULTR_INFERENCE_MODEL?.trim() || DEFAULT_VULTR_INFERENCE_MODEL;
   if (!/^[A-Za-z0-9._:-]{1,100}$/.test(model)) return undefined;
