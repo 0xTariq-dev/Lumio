@@ -34,7 +34,10 @@ class FakeAnalyzer:
         if self.block:
             await self.release.wait()
         if self.fail_next:
+            failure = self.fail_next
             self.fail_next = False
+            if isinstance(failure, BaseException):
+                raise failure
             raise RuntimeError("fake analysis failure")
         if isinstance(request, EmailScanRequest):
             await progress("analyzing_email")
@@ -435,8 +438,8 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
 
             self.analyzer.release.set()
 
-    async def test_failed_email_scan_clears_input_and_recovers_queue(self):
-        self.analyzer.fail_next = True
+    async def _assert_email_scan_failure_cleanup(self, failure):
+        self.analyzer.fail_next = failure
         failed_scan_id = uuid4()
         async with self.app.router.lifespan_context(self.app):
             status, _, body = await asgi_request(
@@ -498,6 +501,57 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
             completed_report(next_events)
             self.assertEqual(manager.active_count, 0)
             self.assertEqual(manager.queued_count, 0)
+
+    async def test_failed_email_scan_clears_input_and_recovers_queue(self):
+        await self._assert_email_scan_failure_cleanup(True)
+
+    async def test_timed_out_email_scan_clears_input_and_recovers_queue(self):
+        await self._assert_email_scan_failure_cleanup(
+            asyncio.TimeoutError("synthetic guest timeout")
+        )
+
+    async def test_shutdown_cancellation_clears_email_input(self):
+        self.analyzer.block = True
+        scan_id = uuid4()
+        async with self.app.router.lifespan_context(self.app):
+            status, _, body = await asgi_request(
+                self.app,
+                "POST",
+                "/v1/scans",
+                headers=request_headers(),
+                body=json.dumps(email_payload(scan_id)).encode(),
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(json.loads(body)["accepted"])
+            await self.analyzer.started.wait()
+
+            manager = self.app.state.scan_manager
+            request = self.analyzer.last_request
+            await manager.stop()
+
+            self.assertEqual(request.emailBase64, "")
+            self.assertEqual(manager.active_count, 0)
+            self.assertEqual(manager.queued_count, 0)
+
+            event_status, _, event_body = await asgi_request(
+                self.app,
+                "GET",
+                f"/v1/scans/{scan_id}/events",
+                headers={"authorization": f"Bearer {TOKEN}"},
+            )
+            self.assertEqual(event_status, 200)
+            self.assertIn(b"event: failed", event_body)
+            self.assertNotIn(b"private body", event_body)
+            self.assertNotIn(b"sender@example.com", event_body)
+
+            scan_status, _, scan_body = await asgi_request(
+                self.app,
+                "GET",
+                f"/v1/scans/{scan_id}",
+                headers={"authorization": f"Bearer {TOKEN}"},
+            )
+            self.assertEqual(scan_status, 200)
+            self.assertEqual(json.loads(scan_body)["status"], "cancelled")
 
 
 if __name__ == "__main__":
