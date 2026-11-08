@@ -184,6 +184,7 @@ class MicrosandboxRunner:
             separators=(",", ":"),
         ).encode("utf-8")
         report: dict[str, Any] | None = None
+        exit_code: int | None = None
         output_bytes = 0
         line_buffer = bytearray()
 
@@ -237,6 +238,9 @@ class MicrosandboxRunner:
                 async for event in handle:
                     if event.event_type == ExecEventType.FAILED:
                         raise RuntimeError("Guest process failed")
+                    if event.event_type == ExecEventType.EXITED:
+                        exit_code = event.code
+                        continue
                     if event.event_type != ExecEventType.STDOUT or not event.data:
                         continue
                     output_bytes += len(event.data)
@@ -257,7 +261,6 @@ class MicrosandboxRunner:
 
                 if line_buffer:
                     await read_guest_line(bytes(line_buffer))
-                exit_code, success = await handle.wait()
-                if not success or exit_code != 0 or report is None:
+                if exit_code != 0 or report is None:
                     raise RuntimeError("Guest process did not produce a report")
                 return report

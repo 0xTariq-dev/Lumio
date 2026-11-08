@@ -14,3 +14,9 @@ For Microsandbox 0.7.13, an OCI image imported from a Docker archive runs from i
 **Why:** This avoids adding a registry just to deploy a prebuilt guest image while preserving digest verification and preventing guest-time image pulls.
 
 **How to apply:** Use the local-tag-plus-digest pattern only when the image is preloaded into the same service account's Microsandbox cache; use a registry-backed digest reference otherwise.
+
+In Microsandbox 0.7.13, iterating an `ExecHandle` yields its `EXITED` event. Calling `wait()` after consuming the stream raises “exec session ended without exit event,” even when the guest completed successfully. Capture the exit code from the stream and require both a successful exit and a valid report.
+
+**Why:** Otherwise a completed isolated analysis is incorrectly marked failed after report generation.
+
+**How to apply:** When using `exec_stream`, consume terminal events in the same async iteration and do not wait on the already-drained handle.

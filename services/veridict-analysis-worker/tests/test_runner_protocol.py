@@ -40,7 +40,7 @@ class FakeExecHandle:
         return events()
 
     async def wait(self):
-        return 0, True
+        raise AssertionError("The runner must consume the streamed exit event.")
 
     async def kill(self):
         return None
@@ -86,7 +86,12 @@ class RunnerProtocolTests(unittest.IsolatedAsyncioTestCase):
                     "Event",
                     (),
                     {"event_type": ExecEventType.STDOUT, "data": encoded},
-                )()
+                )(),
+                type(
+                    "Event",
+                    (),
+                    {"event_type": ExecEventType.EXITED, "data": None, "code": 0},
+                )(),
             ]
         )
         sandbox = FakeSandbox(handle)
