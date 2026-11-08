@@ -89,6 +89,7 @@ class ScanRecord:
     latest_progress: dict[str, Any] | None = None
     report: dict[str, Any] | None = None
     cancel_requested: bool = False
+    pending_email_request: EmailScanRequest | None = field(default=None, repr=False)
     private_links: dict[str, str] = field(default_factory=dict, repr=False)
     events: list[ScanEvent] = field(default_factory=list)
     condition: asyncio.Condition = field(default_factory=asyncio.Condition, repr=False)
@@ -193,6 +194,11 @@ class ScanManager:
                 status="queued",
                 created_at=now,
                 expires_at=now + timedelta(seconds=self.settings.report_ttl_seconds),
+                pending_email_request=(
+                    analysis_request
+                    if isinstance(analysis_request, EmailScanRequest)
+                    else None
+                ),
             )
             self._records[scan_id] = record
             await self._publish_progress(record, "queued")
@@ -238,7 +244,11 @@ class ScanManager:
             return record.status
 
         record.cancel_requested = True
+        record.private_links.clear()
         if record.status == "queued":
+            if record.pending_email_request is not None:
+                record.pending_email_request.emailBase64 = ""
+                record.pending_email_request = None
             record.report = self._partial_report(record)
             await self._publish_progress(record, "failed", status="cancelled")
             await self._publish(
@@ -568,6 +578,7 @@ class ScanManager:
             if record.status != "queued":
                 if isinstance(request, EmailScanRequest):
                     request.emailBase64 = ""
+                record.pending_email_request = None
                 self._queue.task_done()
                 continue
             if record.expires_at <= datetime.now(timezone.utc):
@@ -702,6 +713,7 @@ class ScanManager:
             finally:
                 if isinstance(request, EmailScanRequest):
                     request.emailBase64 = ""
+                record.pending_email_request = None
                 self._active_analysis_task = None
                 self._active_scan_id = None
                 self._queue.task_done()

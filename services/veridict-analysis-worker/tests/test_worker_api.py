@@ -274,6 +274,63 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(status, 200)
             self.assertTrue(json.loads(body)["partial"])
 
+    async def test_queued_email_cancellation_scrubs_input_before_worker_reaches_it(self):
+        analyzer = CancellableAnalyzer()
+        app = create_app(self.settings, analyzer)
+        active_scan_id = uuid4()
+        email_scan_id = uuid4()
+        async with app.router.lifespan_context(app):
+            status, _, _ = await asgi_request(
+                app,
+                "POST",
+                "/v1/scans",
+                headers=request_headers(),
+                body=json.dumps(scan_payload(active_scan_id)).encode(),
+            )
+            self.assertEqual(status, 200)
+            await analyzer.started.wait()
+
+            status, _, _ = await asgi_request(
+                app,
+                "POST",
+                "/v1/scans",
+                headers=request_headers(),
+                body=json.dumps(email_payload(email_scan_id)).encode(),
+            )
+            self.assertEqual(status, 200)
+            manager = app.state.scan_manager
+            queued_record = manager._records[str(email_scan_id)]
+            queued_request = queued_record.pending_email_request
+            self.assertIsNotNone(queued_request)
+            self.assertTrue(queued_request.emailBase64)
+
+            status, _, body = await asgi_request(
+                app,
+                "POST",
+                f"/v1/scans/{email_scan_id}/cancel",
+                headers=request_headers(),
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["status"], "cancelled")
+            self.assertEqual(queued_request.emailBase64, "")
+            self.assertIsNone(queued_record.pending_email_request)
+
+            await asgi_request(
+                app,
+                "POST",
+                f"/v1/scans/{active_scan_id}/cancel",
+                headers=request_headers(),
+            )
+            await asyncio.wait_for(manager._queue.join(), timeout=1)
+            status, _, body = await asgi_request(
+                app,
+                "GET",
+                f"/v1/scans/{email_scan_id}/report",
+                headers={"authorization": f"Bearer {TOKEN}"},
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(json.loads(body)["partial"])
+
     async def test_accepts_email_and_rejects_unsupported_or_private_targets(self):
         async with self.app.router.lifespan_context(self.app):
             status, _, body = await asgi_request(

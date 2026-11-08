@@ -154,6 +154,24 @@ export interface AgentCancellationResponse {
   cancelledApprovalRequests: number;
 }
 
+export type ScanCancellationStatus = typeof ScanCancellationStatus[keyof typeof ScanCancellationStatus];
+
+
+export const ScanCancellationStatus = {
+  queued: 'queued',
+  running: 'running',
+  cancelling: 'cancelling',
+  cancelled: 'cancelled',
+  completed: 'completed',
+  failed: 'failed',
+} as const;
+
+export interface ScanCancellation {
+  scanId: string;
+  status: ScanCancellationStatus;
+  cancelled: boolean;
+}
+
 export type ScanAcceptedStatus = typeof ScanAcceptedStatus[keyof typeof ScanAcceptedStatus];
 
 
@@ -434,6 +452,9 @@ export interface ScanReport {
   findings: ScanFinding[];
   /** @maxItems 10 */
   softwareEvidence?: SoftwareEvidence[];
+  partial?: boolean;
+  /** @maxLength 200 */
+  partialReason?: string;
   coverage: ScanCoverage;
   /**
      * Short-lived token binding redacted evidence to this browser; not part of the exported report.

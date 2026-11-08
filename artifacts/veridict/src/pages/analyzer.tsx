@@ -7,6 +7,9 @@ import {
   useGetScan,
   getGetScanQueryKey,
   useCreateSelectedEmailLinkScan,
+  useCancelScan,
+  useGetScanReport,
+  getGetScanReportQueryKey,
   useCreateAgentProposal,
   useResolveAgentApproval,
   useCancelAgentApprovals,
@@ -266,6 +269,9 @@ function reportHtml(report: ScanReport, explanationText = '') {
   const explanation = explanationText
     ? `<section class="explanation"><h2>Optional AI explanation</h2><p>${escapeHtml(explanationText)}</p><p class="muted">Model-generated explanation only. It does not change the deterministic risk band. Only a redacted evidence summary was sent to Vultr; prompt-retention and model-training terms are unverified.</p></section>`
     : '';
+  const partialBanner = report.partial
+    ? `<section class="partial"><strong>Partial report</strong><p>${escapeHtml(report.partialReason ?? 'The scan was cancelled before all checks were complete. No findings do not establish safety.')}</p></section>`
+    : '';
   return `<!doctype html>
   <html lang="en">
     <head>
@@ -280,6 +286,7 @@ function reportHtml(report: ScanReport, explanationText = '') {
         h1{font-size:30px;margin:8px 0}h2{font-size:18px;margin:8px 0;break-after:avoid-page}
         .meta,.muted{color:#71717a;font-size:13px}
         .band{display:inline-block;border:1px solid #d4d4d8;border-radius:999px;padding:3px 12px;font-weight:650}
+        .partial{margin:18px 0;padding:14px;border:1px solid #d97706;border-radius:8px;background:#fffbeb}
         .finding{border-top:1px solid #e4e4e7;padding:18px 0}
         .kev-context{border-top:1px solid #e4e4e7;margin-top:24px;padding-top:18px;overflow-wrap:anywhere}
         .kev-entry{margin-top:14px;padding:14px 0;border-top:1px solid #e4e4e7}
@@ -299,6 +306,7 @@ function reportHtml(report: ScanReport, explanationText = '') {
     </head>
     <body>
       <main><div class="meta">LUMIO · EVIDENCE REPORT</div><h1>${escapeHtml(riskLabel(report.riskBand))} risk</h1><p class="meta">Completed ${escapeHtml(formatDate(report.completedAt))} · Rule set ${escapeHtml(report.ruleSetVersion)}</p>
+    ${partialBanner}
     ${executionPlan ? `<h2>Execution plan</h2><ol>${executionPlan}</ol>` : ''}
     <h2>Evidence and findings</h2>${findings || '<p>No findings were returned by the analyzer.</p>'}
     ${kevContextHtml(report)}
@@ -412,6 +420,7 @@ export default function AnalyzerPage() {
   const createUrl = useCreateUrlScan();
   const createEmail = useCreateEmailScan();
   const createSelectedLink = useCreateSelectedEmailLinkScan();
+  const cancelScanMutation = useCancelScan();
   const createAgentProposal = useCreateAgentProposal();
   const resolveAgentApprovalMutation = useResolveAgentApproval();
   const cancelAgentApprovals = useCancelAgentApprovals();
@@ -436,6 +445,7 @@ export default function AnalyzerPage() {
   const [explanationStatus, setExplanationStatus] = useState<'idle' | 'streaming' | 'complete' | 'error'>('idle');
   const [approvalRequest, setApprovalRequest] = useState<AgentApprovalRequest | null>(null);
   const [approvalError, setApprovalError] = useState('');
+  const [cancelRequestedScanId, setCancelRequestedScanId] = useState<string | null>(null);
   const explanationAbortRef = useRef<AbortController | null>(null);
   const scanQuery = useGetScan(scanAccepted?.scanId ?? '', {
     query: {
@@ -445,6 +455,12 @@ export default function AnalyzerPage() {
         const status = query.state.data?.status;
         return status === 'completed' || status === 'failed' || status === 'cancelled' ? false : 4000;
       },
+    },
+  });
+  const scanReportQuery = useGetScanReport(scanAccepted?.scanId ?? '', {
+    query: {
+      queryKey: getGetScanReportQueryKey(scanAccepted?.scanId ?? ''),
+      enabled: scanQuery.data?.status === 'cancelled' && !report,
     },
   });
   const status = statusQuery.data;
@@ -482,6 +498,7 @@ export default function AnalyzerPage() {
         if (nextReport.type === 'email') setEmailReport(nextReport);
         setStreamFinished(true);
         setStreamError('');
+        void queryClient.invalidateQueries({ queryKey: getGetScanReportQueryKey(nextReport.scanId) });
         void queryClient.invalidateQueries({ queryKey: getGetAnalysisStatusQueryKey() });
       } catch {
         setStreamError('A report could not be read from the stream. The scan status is being recovered.');
@@ -502,14 +519,35 @@ export default function AnalyzerPage() {
   useEffect(() => {
     const snapshot = scanQuery.data;
     if (!snapshot) return;
-    if (snapshot.status === 'failed' || snapshot.status === 'cancelled') {
+    if (snapshot.status === 'failed') {
       setStreamError('Analysis did not complete. No report is available for this scan.');
       setStreamFinished(true);
+    } else if (snapshot.status === 'cancelled' && !report) {
+      setStreamError('The scan was cancelled. Recovering its partial report.');
     } else if (snapshot.status === 'completed' && !report) {
       setStreamFinished(true);
       setStreamError('This scan completed, but its transient report is no longer available. Start a new scan to receive a fresh report.');
     }
   }, [scanQuery.data, report]);
+
+  useEffect(() => {
+    const recoveredReport = scanReportQuery.data;
+    if (recoveredReport && !report) {
+      setReport(recoveredReport);
+      if (recoveredReport.type === 'email') setEmailReport(recoveredReport);
+      setStreamFinished(true);
+      setStreamError('');
+      return;
+    }
+    if (
+      scanQuery.data?.status === 'cancelled' &&
+      scanReportQuery.isError &&
+      !report
+    ) {
+      setStreamFinished(true);
+      setStreamError('The scan was cancelled, but its transient report is unavailable. Start a new scan for a fresh result.');
+    }
+  }, [scanReportQuery.data, scanReportQuery.isError, scanQuery.data?.status, report]);
 
   useEffect(() => {
     if (!activeReport || !streamFinished) return;
@@ -572,6 +610,25 @@ export default function AnalyzerPage() {
       setEmailReport(null);
       setSelectedLinkId('');
     }
+  }
+
+  function cancelActiveScan() {
+    if (!scanAccepted) return;
+    setStreamError('Cancellation requested. Waiting for the partial report.');
+    cancelScanMutation.mutate(
+      { scanId: scanAccepted.scanId },
+      {
+        onSuccess: (result) => {
+          if (result.cancelled) setCancelRequestedScanId(result.scanId);
+          if (result.status === 'completed') {
+            void scanQuery.refetch();
+          }
+        },
+        onError: () => {
+          setStreamError('Cancellation could not be confirmed. The analysis may still be running.');
+        },
+      },
+    );
   }
 
   function handleUrlSubmit(event: FormEvent<HTMLFormElement>) {
@@ -949,6 +1006,20 @@ export default function AnalyzerPage() {
                     <p className="mt-1 text-xs text-muted-foreground">{progress ? `${progress.completedSteps} of ${progress.totalSteps} plan steps resolved` : 'Waiting for the scan service to publish its execution plan.'}</p>
                   {streamError && <p className="mt-2 text-xs text-muted-foreground" data-testid="status-stream-recovery">{streamError}</p>}
                 </div>
+                <div className="mt-4 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={cancelActiveScan}
+                    disabled={cancelScanMutation.isPending || cancelRequestedScanId === scanAccepted?.scanId}
+                    aria-label="Cancel the current scan"
+                    data-testid="button-cancel-scan"
+                    className="inline-flex min-h-11 items-center justify-center rounded-lg border border-border px-4 text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {cancelScanMutation.isPending || cancelRequestedScanId === scanAccepted?.scanId
+                      ? 'Cancelling scan…'
+                      : 'Cancel scan'}
+                  </button>
+                </div>
                 {scanQuery.isError && <p className="mt-3 text-sm text-muted-foreground">Unable to recover the latest status. Waiting for the live scan stream.</p>}
               </div>
             ) : activeReport ? (
@@ -1083,6 +1154,18 @@ function ReportView({
               </span>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">Completed {formatDate(report.completedAt)} · Ruleset {report.ruleSetVersion}</p>
+            {report.partial && (
+              <div
+                className="mt-3 rounded-lg border border-amber-600/30 bg-amber-500/5 px-4 py-3 text-sm"
+                role="status"
+                data-testid="status-partial-report"
+              >
+                <p className="font-semibold">Partial report</p>
+                <p className="mt-1 text-muted-foreground">
+                  {report.partialReason ?? 'The scan was cancelled before all checks were complete. No findings do not establish safety.'}
+                </p>
+              </div>
+            )}
           </div>
           <div className="flex flex-col items-end gap-2">
             <div className="flex gap-2 print:hidden" data-testid="report-actions">

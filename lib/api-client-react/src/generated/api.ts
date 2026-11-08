@@ -37,6 +37,8 @@ import type {
   HealthStatus,
   LinkScanConsent,
   ScanAccepted,
+  ScanCancellation,
+  ScanReport,
   ScanSnapshot,
   UrlScanInput
 } from './api.schemas';
@@ -163,6 +165,13 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
+
 export const getGetAnalysisStatusUrl = () => {
 
 
@@ -257,6 +266,13 @@ export function useGetAnalysisStatus<TData = Awaited<ReturnType<typeof getAnalys
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
+
 export const getCreateUrlScanUrl = () => {
 
 
@@ -517,6 +533,189 @@ export function useGetScan<TData = Awaited<ReturnType<typeof getScan>>, TError =
 
   return withQueryKey(query, queryOptions.queryKey);
 }
+
+
+
+
+
+
+
+export const getCancelScanUrl = (scanId: string,) => {
+
+
+
+
+  return `/api/scans/${scanId}/cancel`
+}
+
+/**
+ * Stops an active isolated scan and returns a partial report when available.
+ * @summary Cancel an active scan
+ */
+export const cancelScan = async (scanId: string, options?: Parameters<typeof customFetch>[1]): Promise<ScanCancellation> => {
+
+  return customFetch<ScanCancellation>(getCancelScanUrl(scanId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCancelScanMutationKey = () => ['cancelScan'] as const;
+
+export const getCancelScanMutationOptions = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelScan>>, TError,CancelScanMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelScan>>, TError,CancelScanMutationVariables, TContext> => {
+
+const mutationKey = getCancelScanMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelScan>>, CancelScanMutationVariables> = (props) => {
+          const {scanId} = props ?? {};
+
+          return  cancelScan(scanId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelScanMutationResult = NonNullable<Awaited<ReturnType<typeof cancelScan>>>
+
+    export type CancelScanMutationError = ErrorType<ApiError>
+    export type CancelScanMutationVariables = {scanId: string}
+
+    /**
+ * @summary Cancel an active scan
+ */
+export const useCancelScan = <TError = ErrorType<ApiError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelScan>>, TError,CancelScanMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof cancelScan>>,
+        TError,
+        CancelScanMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCancelScanMutationOptions(options), queryClient);
+    }
+
+export const getGetScanReportUrl = (scanId: string,) => {
+
+
+
+
+  return `/api/scans/${scanId}/report`
+}
+
+/**
+ * @summary Recover a completed or partial scan report
+ */
+export const getScanReport = async (scanId: string, options?: Parameters<typeof customFetch>[1]): Promise<ScanReport> => {
+
+  return customFetch<ScanReport>(getGetScanReportUrl(scanId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetScanReportQueryKey = (scanId: string,) => {
+    return [
+    `/api/scans/${scanId}/report`
+    ] as const;
+    }
+
+
+export const getGetScanReportQueryOptions = <TData = Awaited<ReturnType<typeof getScanReport>>, TError = ErrorType<ApiError>>(scanId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScanReport>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetScanReportQueryKey(scanId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getScanReport>>> = ({ signal }) => getScanReport(scanId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: scanId !== null && scanId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getScanReport>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type GetScanReportQueryResult = NonNullable<Awaited<ReturnType<typeof getScanReport>>>
+export type GetScanReportQueryError = ErrorType<ApiError>
+
+
+export function useGetScanReport<TData = Awaited<ReturnType<typeof getScanReport>>, TError = ErrorType<ApiError>>(
+ scanId: string, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScanReport>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getScanReport>>,
+          TError,
+          Awaited<ReturnType<typeof getScanReport>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetScanReport<TData = Awaited<ReturnType<typeof getScanReport>>, TError = ErrorType<ApiError>>(
+ scanId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScanReport>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof getScanReport>>,
+          TError,
+          Awaited<ReturnType<typeof getScanReport>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useGetScanReport<TData = Awaited<ReturnType<typeof getScanReport>>, TError = ErrorType<ApiError>>(
+ scanId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScanReport>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Recover a completed or partial scan report
+ */
+
+export function useGetScanReport<TData = Awaited<ReturnType<typeof getScanReport>>, TError = ErrorType<ApiError>>(
+ scanId: string, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof getScanReport>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getGetScanReportQueryOptions(scanId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
 export const getStreamScanExplanationUrl = (scanId: string,) => {
 
 

@@ -36,7 +36,10 @@ const WorkerReportSchema = z.object({
   riskBand: z.enum(["low", "moderate", "high", "critical", "inconclusive"]),
   completedAt: z.string(),
   ruleSetVersion: z.string(),
+  partial: z.boolean().optional(),
+  partialReason: z.string().max(200).optional(),
   findings: z.array(z.object({
+    id: z.string(),
     title: z.string(),
     explanation: z.string(),
     severity: z.enum(["informational", "low", "moderate", "high", "critical"]),
@@ -53,6 +56,35 @@ const WorkerReportSchema = z.object({
       reason: z.string().nullable().optional(),
     })),
   }),
+  softwareEvidence: z.array(z.object({
+    product: z.enum(["WordPress"]),
+    version: z.string().max(30).nullable().optional(),
+    evidenceStrength: z.enum(["strong", "weak", "ambiguous"]),
+    evidenceSource: z.enum(["html_generator_and_wp_asset_path", "html_generator_only", "wp_asset_path_only"]),
+  })).max(10).optional(),
+  executionPlan: z.array(z.object({
+    id: z.enum(["consent_target", "sandbox", "http", "static", "browser", "email_parse", "report"]),
+    status: z.enum(["pending", "running", "completed", "skipped", "failed", "blocked"]),
+    reasonCode: z.enum([
+      "consent_checked",
+      "no_browser_required",
+      "redirect_blocked",
+      "not_html",
+      "static_body_limit",
+      "http_unavailable",
+      "http_fetch_failed",
+      "browser_error",
+      "earlier_step_failed",
+      "analysis_failed",
+    ]).optional(),
+  })).min(4).max(6).optional(),
+  links: z.array(z.object({
+    linkId: z.uuid(),
+    anchorText: z.string().max(200),
+    displayUrl: z.string().max(300),
+    targetHost: z.string().max(253),
+    scanAvailable: z.boolean(),
+  })).max(50).optional(),
 });
 
 export type WorkerReport = z.infer<typeof WorkerReportSchema>;

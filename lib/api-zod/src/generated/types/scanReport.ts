@@ -22,6 +22,9 @@ export interface ScanReport {
   findings: ScanFinding[];
   /** @maxItems 10 */
   softwareEvidence?: SoftwareEvidence[];
+  partial?: boolean;
+  /** @maxLength 200 */
+  partialReason?: string;
   coverage: ScanCoverage;
   /**
      * Short-lived token binding redacted evidence to this browser; not part of the exported report.

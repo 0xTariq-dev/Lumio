@@ -148,6 +148,81 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
+  /scans/{scanId}/cancel:
+    post:
+      operationId: cancelScan
+      tags: [analyzer]
+      summary: Cancel an active scan
+      description: Stops an active isolated scan and returns a partial report when available.
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Scan cancellation status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanCancellation"
+        "400":
+          description: Invalid scan reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Scan not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Analysis worker unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+  /scans/{scanId}/report:
+    get:
+      operationId: getScanReport
+      tags: [analyzer]
+      summary: Recover a completed or partial scan report
+      parameters:
+        - name: scanId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Transient completed report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanReport"
+        "400":
+          description: Invalid scan reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Report no longer available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "503":
+          description: Analysis worker unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
   /scans/{scanId}/explanation/stream:
     post:
       operationId: streamScanExplanation
@@ -655,6 +730,18 @@ components:
         cancelledApprovalRequests:
           type: integer
           minimum: 0
+    ScanCancellation:
+      type: object
+      required: [scanId, status, cancelled]
+      properties:
+        scanId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, running, cancelling, cancelled, completed, failed]
+        cancelled:
+          type: boolean
     ScanAccepted:
       type: object
       required: [scanId, status, eventsPath, expiresAt]
@@ -778,6 +865,11 @@ components:
           maxItems: 10
           items:
             $ref: "#/components/schemas/SoftwareEvidence"
+        partial:
+          type: boolean
+        partialReason:
+          type: string
+          maxLength: 200
         coverage:
           $ref: "#/components/schemas/ScanCoverage"
         explanationToken:

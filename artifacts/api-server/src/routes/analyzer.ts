@@ -17,6 +17,7 @@ import { z } from "zod";
 import {
   cancelWorkerScan,
   fetchWorkerScan,
+  fetchWorkerReport,
   getAnalysisWorkerHealth,
   openWorkerScanEvents,
   postWorkerScan,
@@ -685,6 +686,37 @@ router.post("/scans/:scanId/cancel", async (req, res) => {
     );
   }
   return res.json(result.cancellation);
+});
+
+router.get("/scans/:scanId/report", async (req, res) => {
+  const params = GetScanParams.safeParse(req.params);
+  if (!params.success) {
+    return sendApiError(res, 400, "INVALID_SCAN_ID", "The scan reference is invalid.");
+  }
+  const result = await fetchWorkerReport(params.data.scanId);
+  if (result.kind === "not_found") {
+    return sendApiError(res, 404, "REPORT_NOT_FOUND", "This scan report is no longer available.");
+  }
+  if (result.kind === "unavailable") {
+    return sendApiError(
+      res,
+      503,
+      "ANALYSIS_WORKER_UNAVAILABLE",
+      "The scan report is temporarily unavailable.",
+      true,
+    );
+  }
+  if (result.report.scanId !== params.data.scanId) {
+    return sendApiError(res, 502, "INVALID_WORKER_RESPONSE", "The scan report could not be verified.");
+  }
+  const safeReport = sanitizeEmailReport(result.report);
+  const browserToken = getOrCreateBrowserToken(req, res);
+  return res.json({
+    ...safeReport,
+    ...(safeReport.partial
+      ? {}
+      : { explanationToken: createExplanationToken(safeReport, browserToken) }),
+  });
 });
 
 router.post(

@@ -138,6 +138,109 @@ export const GetScanResponse = zod.object({
 
 
 /**
+ * Stops an active isolated scan and returns a partial report when available.
+ * @summary Cancel an active scan
+ */
+export const CancelScanParams = zod.object({
+  "scanId": zod.uuid()
+})
+
+export const CancelScanResponse = zod.object({
+  "scanId": zod.uuid(),
+  "status": zod.enum(['queued', 'running', 'cancelling', 'cancelled', 'completed', 'failed']),
+  "cancelled": zod.boolean()
+})
+
+
+/**
+ * @summary Recover a completed or partial scan report
+ */
+export const GetScanReportParams = zod.object({
+  "scanId": zod.uuid()
+})
+
+export const getScanReportResponseFindingsItemTitleMax = 100;
+
+export const getScanReportResponseFindingsItemExplanationMax = 500;
+
+export const getScanReportResponseFindingsItemSanitizedObservedValueMax = 300;
+
+export const getScanReportResponseFindingsItemLimitationsItemMax = 200;
+
+export const getScanReportResponseSoftwareEvidenceItemVersionMax = 30;
+
+export const getScanReportResponseSoftwareEvidenceMax = 10;
+
+export const getScanReportResponsePartialReasonMax = 200;
+
+export const getScanReportResponseCoverageChecksItemNameMax = 80;
+
+export const getScanReportResponseCoverageChecksItemReasonMax = 200;
+
+export const getScanReportResponseExplanationTokenMax = 12000;
+
+export const getScanReportResponseExecutionPlanMin = 4;
+export const getScanReportResponseExecutionPlanMax = 6;
+
+export const getScanReportResponseLinksItemAnchorTextMax = 200;
+
+export const getScanReportResponseLinksItemDisplayUrlMax = 300;
+
+export const getScanReportResponseLinksItemTargetHostMax = 253;
+
+export const getScanReportResponseLinksMax = 50;
+
+
+
+export const GetScanReportResponse = zod.object({
+  "scanId": zod.uuid(),
+  "type": zod.enum(['url', 'email', 'email_link']),
+  "riskBand": zod.enum(['low', 'moderate', 'high', 'critical', 'inconclusive']),
+  "completedAt": zod.coerce.date(),
+  "ruleSetVersion": zod.string(),
+  "findings": zod.array(zod.object({
+  "id": zod.string(),
+  "title": zod.string().max(getScanReportResponseFindingsItemTitleMax),
+  "explanation": zod.string().max(getScanReportResponseFindingsItemExplanationMax),
+  "severity": zod.enum(['informational', 'low', 'moderate', 'high', 'critical']),
+  "strength": zod.enum(['direct', 'contextual']),
+  "source": zod.enum(['url_navigation', 'browser', 'email_headers', 'email_body', 'attachment_metadata']),
+  "sanitizedObservedValue": zod.string().max(getScanReportResponseFindingsItemSanitizedObservedValueMax).nullish(),
+  "limitations": zod.array(zod.string().max(getScanReportResponseFindingsItemLimitationsItemMax)).optional()
+})),
+  "softwareEvidence": zod.array(zod.object({
+  "product": zod.enum(['WordPress']),
+  "version": zod.string().max(getScanReportResponseSoftwareEvidenceItemVersionMax).nullish(),
+  "evidenceStrength": zod.enum(['strong', 'weak', 'ambiguous']),
+  "evidenceSource": zod.enum(['html_generator_and_wp_asset_path', 'html_generator_only', 'wp_asset_path_only'])
+})).max(getScanReportResponseSoftwareEvidenceMax).optional(),
+  "partial": zod.boolean().optional(),
+  "partialReason": zod.string().max(getScanReportResponsePartialReasonMax).optional(),
+  "coverage": zod.object({
+  "sufficient": zod.boolean(),
+  "checks": zod.array(zod.object({
+  "name": zod.string().max(getScanReportResponseCoverageChecksItemNameMax),
+  "status": zod.enum(['completed', 'skipped', 'blocked', 'failed']),
+  "reason": zod.string().max(getScanReportResponseCoverageChecksItemReasonMax).nullish()
+}))
+}),
+  "explanationToken": zod.string().max(getScanReportResponseExplanationTokenMax).optional().describe('Short-lived token binding redacted evidence to this browser; not part of the exported report.'),
+  "executionPlan": zod.array(zod.object({
+  "id": zod.enum(['consent_target', 'sandbox', 'http', 'static', 'browser', 'email_parse', 'report']),
+  "status": zod.enum(['pending', 'running', 'completed', 'skipped', 'failed', 'blocked']),
+  "reasonCode": zod.enum(['consent_checked', 'no_browser_required', 'redirect_blocked', 'not_html', 'static_body_limit', 'http_unavailable', 'http_fetch_failed', 'browser_error', 'earlier_step_failed', 'analysis_failed']).optional()
+})).min(getScanReportResponseExecutionPlanMin).max(getScanReportResponseExecutionPlanMax).optional(),
+  "links": zod.array(zod.object({
+  "linkId": zod.uuid(),
+  "anchorText": zod.string().max(getScanReportResponseLinksItemAnchorTextMax),
+  "displayUrl": zod.string().max(getScanReportResponseLinksItemDisplayUrlMax).describe('Sanitized display URL with query values and fragments redacted.'),
+  "targetHost": zod.string().max(getScanReportResponseLinksItemTargetHostMax),
+  "scanAvailable": zod.boolean()
+})).max(getScanReportResponseLinksMax).optional()
+})
+
+
+/**
  * Requires separate per-scan consent and a short-lived, browser-bound
  * evidence token. Sends only a bounded, redacted evidence summary to
  * Vultr Serverless Inference. The explanation cannot alter the report.
