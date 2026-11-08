@@ -35,6 +35,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   LOCAL_KEV_SNAPSHOT,
   evidenceSourceLabel,
+  kevStatusLabel,
   matchKevContext,
 } from '@/lib/kev-context';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -257,13 +258,15 @@ function escapeHtml(value: unknown) {
   })[char] as string);
 }
 
-function kevStatusLabel(result: ReturnType<typeof matchKevContext>) {
-  if (result.status === 'matched') return 'Possible match in the local snapshot';
-  if (result.status === 'no-match') return 'No matching entry in this snapshot';
-  if (result.reason === 'weak') return 'Evidence was too weak to match';
-  if (result.reason === 'ambiguous') return 'Evidence was ambiguous, so no match was made';
-  if (result.reason === 'unknown-version') return 'No exact version was available for matching';
-  return 'No product and version evidence was available';
+function formatAffectedRange(range: { from: string; through?: string; lessThan?: string }) {
+  if (range.lessThan) return `${range.from} to <${range.lessThan}`;
+  if (range.through) return `${range.from}–${range.through}`;
+  return range.from;
+}
+
+function kevSnapshotAgeLabel(result: ReturnType<typeof matchKevContext>) {
+  if (result.snapshotAgeDays === null) return 'CISA source date unavailable';
+  return `CISA source data is ${result.snapshotAgeDays} day${result.snapshotAgeDays === 1 ? '' : 's'} old`;
 }
 
 function kevContextHtml(report: ScanReport) {
@@ -273,7 +276,7 @@ function kevContextHtml(report: ScanReport) {
   const evidence = result.evidence;
   const matches = result.matches.map((entry) => {
     const ranges = entry.affectedRanges
-      .map((range) => `${range.from}–${range.through}`)
+      .map(formatAffectedRange)
       .join('; ');
     return `
       <article class="kev-entry">
@@ -281,7 +284,7 @@ function kevContextHtml(report: ScanReport) {
         <p>${escapeHtml(entry.summary)}</p>
         <p><strong>${escapeHtml(entry.kevStatus)}</strong> · Added ${escapeHtml(entry.kevDate)}</p>
         <p><strong>Affected releases:</strong> ${escapeHtml(ranges)}</p>
-        <p><strong>Fixed-version reference:</strong> ${escapeHtml(entry.fixedVersion)}. ${escapeHtml(entry.branchNote)}</p>
+        <p><strong>Fix / unaffected-boundary reference:</strong> ${escapeHtml(entry.fixedVersion)}. ${escapeHtml(entry.branchNote)}</p>
         <p class="kev-sources">
           Sources:
           <a href="${escapeHtml(entry.cisaUrl)}" target="_blank" rel="noopener noreferrer">CISA alert</a> ·
@@ -299,7 +302,8 @@ function kevContextHtml(report: ScanReport) {
         ? `<p><strong>Observed:</strong> ${escapeHtml(evidence.product)} ${escapeHtml(evidence.version || 'version unknown')} · ${escapeHtml(evidenceSourceLabel(evidence.evidenceSource))}</p>`
         : ''}
       ${matches || '<p>No CVE context was matched from the available exact, strong evidence.</p>'}
-      <p class="muted">Snapshot verified ${escapeHtml(LOCAL_KEV_SNAPSHOT.checkedAt)} · local data, not live.</p>
+      <p class="muted">Snapshot verified ${escapeHtml(LOCAL_KEV_SNAPSHOT.checkedAt)} · CISA feed released ${escapeHtml(LOCAL_KEV_SNAPSHOT.cisaReleasedAt)} · local data, not live.</p>
+      ${result.snapshotStale ? '<p class="muted"><strong>Warning:</strong> This snapshot is older than 30 days or its date is invalid. Refresh the local dataset before relying on matches or no-match results.</p>' : ''}
       <p class="muted">Possible/unverified; no vulnerability test performed. This context does not change the phishing risk band and a missing match does not establish safety.</p>
     </section>`;
 }
@@ -411,11 +415,11 @@ function KevContextSection({ report }: { report: ScanReport }) {
             <div>
               <dt className="font-medium">Affected release ranges</dt>
               <dd className="break-words text-muted-foreground">
-                {entry.affectedRanges.map((range) => `${range.from}–${range.through}`).join('; ')}
+                {entry.affectedRanges.map(formatAffectedRange).join('; ')}
               </dd>
             </div>
             <div>
-              <dt className="font-medium">Fixed-version reference</dt>
+              <dt className="font-medium">Fix / unaffected-boundary reference</dt>
               <dd className="text-muted-foreground">{entry.fixedVersion}. {entry.branchNote}</dd>
             </div>
           </dl>
@@ -428,8 +432,13 @@ function KevContextSection({ report }: { report: ScanReport }) {
       ))}
 
       <p className="mt-3 text-xs leading-5 text-muted-foreground" data-testid="kev-snapshot-freshness">
-        Local snapshot verified {LOCAL_KEV_SNAPSHOT.checkedAt}; it is not live.
+        Local snapshot refreshed {LOCAL_KEV_SNAPSHOT.checkedAt}; CISA feed released {LOCAL_KEV_SNAPSHOT.cisaReleasedAt}; {kevSnapshotAgeLabel(result)}.
       </p>
+      {result.snapshotStale && (
+        <p className="mt-1 rounded-md border border-amber-600/30 bg-amber-500/5 p-3 text-xs leading-5" role="alert" data-testid="kev-snapshot-stale">
+          This snapshot is older than 30 days or its date is invalid. Refresh the local dataset before relying on matches or no-match results.
+        </p>
+      )}
       <p className="mt-1 text-xs leading-5 text-muted-foreground">
         Possible/unverified; no vulnerability test performed. This context does not change the phishing risk band, and a missing match does not establish safety.
       </p>

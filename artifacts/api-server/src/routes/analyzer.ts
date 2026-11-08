@@ -32,6 +32,7 @@ import {
   toPublicWorkerFailureEvent,
   toPublicWorkerCancellationEvent,
 } from "../lib/analysis-event-safety";
+import { serializePublicSseEvent } from "../lib/analysis-sse";
 import { normalizeScanTargetInput } from "../lib/normalize-target";
 import {
   areScanQuotaLimitsEnabled,
@@ -772,8 +773,9 @@ function parseEventBlock(
   block: string,
   expectedScanId: string,
   browserToken: string,
-): { event: string; data: unknown } | undefined {
+): { id?: string; event: string; data: unknown } | undefined {
   let eventName = "message";
+  let eventId: string | undefined;
   const dataLines: string[] = [];
   for (const line of block.split(/\r?\n/)) {
     if (!line || line.startsWith(":")) continue;
@@ -784,6 +786,12 @@ function parseEventBlock(
         ? ""
         : line.slice(separator + 1).replace(/^ /, "");
     if (field === "event") eventName = value;
+    if (field === "id") {
+      if (!/^\d{1,10}$/.test(value)) {
+        throw new Error("Invalid worker event ID");
+      }
+      eventId = value;
+    }
     if (field === "data") dataLines.push(value);
   }
   if (dataLines.length === 0) return undefined;
@@ -794,13 +802,18 @@ function parseEventBlock(
   } catch {
     throw new Error("Invalid worker event payload");
   }
+  const withId = (event: string, eventData: unknown) => ({
+    ...(eventId ? { id: eventId } : {}),
+    event,
+    data: eventData,
+  });
 
   if (eventName === "progress") {
     const progress = ScanProgressSchema.parse(data);
-    return {
-      event: "progress",
-      data: { ...progress, message: safeProgressMessage(progress.stage) },
-    };
+    return withId("progress", {
+      ...progress,
+      message: safeProgressMessage(progress.stage),
+    });
   }
   if (eventName === "completed") {
     const report = ScanReportSchema.parse(data);
@@ -808,29 +821,29 @@ function parseEventBlock(
       throw new Error("Worker event scan reference mismatch");
     }
     const safeReport = sanitizeEmailReport(report);
-    return {
-      event: "completed",
-      data: {
-        ...safeReport,
-        explanationToken: createExplanationToken(safeReport, browserToken),
-      },
-    };
+    return withId("completed", {
+      ...safeReport,
+      explanationToken: createExplanationToken(safeReport, browserToken),
+    });
   }
   if (eventName === "review_ready") {
     const ready = ReviewReadyEventSchema.parse(data);
     if (ready.scanId !== expectedScanId) {
       throw new Error("Worker event scan reference mismatch");
     }
-    return { event: "review_ready", data: { scanId: ready.scanId, deadline: ready.deadline } };
+    return withId("review_ready", {
+      scanId: ready.scanId,
+      deadline: ready.deadline,
+    });
   }
   if (eventName === "agent_action") {
-    return { event: "agent_action", data: AgentActionResultSchema.parse(data) };
+    return withId("agent_action", AgentActionResultSchema.parse(data));
   }
   if (eventName === "failed") {
-    return toPublicWorkerFailureEvent(data);
+    return { ...toPublicWorkerFailureEvent(data), ...(eventId ? { id: eventId } : {}) };
   }
   if (eventName === "cancelled") {
-    return toPublicWorkerCancellationEvent(data);
+    return { ...toPublicWorkerCancellationEvent(data), ...(eventId ? { id: eventId } : {}) };
   }
   return undefined;
 }
@@ -948,7 +961,7 @@ router.get("/scans/:scanId/events", async (req, res) => {
         buffer = buffer.slice(boundary + 2);
         const event = parseEventBlock(block, params.data.scanId, browserToken);
         if (event) {
-          res.write(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
+          res.write(serializePublicSseEvent(event));
           if (isTerminalAnalysisEvent(event.event)) {
             done = true;
             controller.abort();

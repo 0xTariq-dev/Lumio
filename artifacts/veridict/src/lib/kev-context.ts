@@ -1,3 +1,5 @@
+import snapshot from './kev-snapshot.json' with { type: 'json' };
+
 export type SoftwareEvidence = {
   product: string;
   version?: string | null;
@@ -10,7 +12,8 @@ export type SoftwareEvidence = {
 
 type AffectedRange = {
   from: string;
-  through: string;
+  through?: string;
+  lessThan?: string;
 };
 
 export type KevEntry = {
@@ -27,64 +30,22 @@ export type KevEntry = {
   vendorAdvisoryUrl: string;
 };
 
-export const LOCAL_KEV_SNAPSHOT: {
+export type KevSnapshot = {
   version: string;
   checkedAt: string;
+  cisaReleasedAt: string;
   entries: KevEntry[];
-} = {
-  version: '2026-11-08',
-  checkedAt: '2026-11-08',
-  entries: [
-    {
-      cveId: 'CVE-2026-119977',
-      product: 'WordPress',
-      summary:
-        'WordPress Core has a remote-code-execution vulnerability during the upgrade window.',
-      affectedRanges: [
-        { from: '4.7.0', through: '4.7.38' },
-        { from: '4.8.0', through: '4.8.33' },
-        { from: '4.9.0', through: '4.9.34' },
-        { from: '5.0.0', through: '5.0.30' },
-        { from: '5.1.0', through: '5.1.27' },
-        { from: '5.2.0', through: '5.2.29' },
-        { from: '5.3.0', through: '5.3.26' },
-        { from: '5.4.0', through: '5.4.24' },
-        { from: '5.5.0', through: '5.5.23' },
-        { from: '5.6.0', through: '5.6.22' },
-        { from: '5.7.0', through: '5.7.20' },
-        { from: '5.8.0', through: '5.8.18' },
-        { from: '5.9.0', through: '5.9.19' },
-        { from: '6.0.0', through: '6.0.17' },
-        { from: '6.1.0', through: '6.1.15' },
-        { from: '6.2.0', through: '6.2.14' },
-        { from: '6.3.0', through: '6.3.13' },
-        { from: '6.4.0', through: '6.4.13' },
-        { from: '6.5.0', through: '6.5.13' },
-        { from: '6.6.0', through: '6.6.10' },
-        { from: '6.7.0', through: '6.7.10' },
-        { from: '6.8.0', through: '6.8.11' },
-        { from: '6.9.0', through: '6.9.10' },
-        { from: '7.0.0', through: '7.0.7' },
-        { from: '7.1.0', through: '7.1.3' },
-      ],
-      kevStatus: 'Listed in CISA Known Exploited Vulnerabilities Catalog',
-      kevDate: '2026-11-03',
-      fixedVersion: '7.1.4',
-      branchNote:
-        'The vendor advisory notes security backports for eligible branches; confirm the fixed release for the installed branch.',
-      cisaUrl:
-        'https://www.cisa.gov/news-events/alerts/2026/11/03/cisa-adds-one-known-exploited-vulnerability-catalog',
-      cveRecordUrl: 'https://cveawg.mitre.org/api/cve/CVE-2026-119977',
-      vendorAdvisoryUrl: 'https://wordpress.org/news/2026/10/wordpress-7-1-4/',
-    },
-  ],
 };
+export const LOCAL_KEV_SNAPSHOT = snapshot as KevSnapshot;
+export const KEV_SNAPSHOT_MAX_AGE_DAYS = 30;
 
 export type KevContextResult = {
   status: 'matched' | 'no-match' | 'insufficient';
   evidence?: SoftwareEvidence;
   matches: KevEntry[];
   reason?: 'missing' | 'weak' | 'ambiguous' | 'unknown-version';
+  snapshotStale: boolean;
+  snapshotAgeDays: number | null;
 };
 
 function compareVersions(left: string, right: string): number | null {
@@ -110,48 +71,93 @@ function compareVersions(left: string, right: string): number | null {
 
 export function matchKevContext(
   evidence: SoftwareEvidence[] | undefined,
+  source: KevSnapshot = LOCAL_KEV_SNAPSHOT,
+  now: Date = new Date(),
 ): KevContextResult {
+  const checkedAt = Date.parse(source.checkedAt);
+  const cisaReleasedAt = Date.parse(source.cisaReleasedAt);
+  const validDates = Number.isFinite(checkedAt) && Number.isFinite(cisaReleasedAt);
+  const oldestSourceDate = validDates
+    ? Math.min(checkedAt, cisaReleasedAt)
+    : Number.POSITIVE_INFINITY;
+  const ageMs = Number.isFinite(oldestSourceDate)
+    ? Math.max(0, now.getTime() - oldestSourceDate)
+    : Number.POSITIVE_INFINITY;
+  const snapshotAgeDays = Number.isFinite(ageMs)
+    ? Math.floor(ageMs / (24 * 60 * 60 * 1000))
+    : null;
+  const snapshotStale =
+    snapshotAgeDays === null ||
+    ageMs > KEV_SNAPSHOT_MAX_AGE_DAYS * 24 * 60 * 60 * 1000;
+  const result = (
+    status: KevContextResult['status'],
+    details: {
+      evidence?: SoftwareEvidence;
+      matches?: KevEntry[];
+      reason?: KevContextResult['reason'];
+    } = {},
+  ): KevContextResult => ({
+    status,
+    matches: [],
+    ...details,
+    snapshotStale,
+    snapshotAgeDays,
+  });
+
   if (!evidence?.length) {
-    return { status: 'insufficient', matches: [], reason: 'missing' };
+    return result('insufficient', { matches: [], reason: 'missing' });
   }
 
   if (evidence.length !== 1) {
-    return { status: 'insufficient', matches: [], reason: 'ambiguous' };
+    return result('insufficient', { matches: [], reason: 'ambiguous' });
   }
 
   const observed = evidence[0];
   if (observed.evidenceStrength !== 'strong') {
-    return {
-      status: 'insufficient',
+    return result('insufficient', {
       evidence: observed,
       matches: [],
       reason: observed.evidenceStrength === 'ambiguous' ? 'ambiguous' : 'weak',
-    };
+    });
   }
 
   if (!observed.version || !/^\d+\.\d+\.\d+$/.test(observed.version)) {
-    return {
-      status: 'insufficient',
+    return result('insufficient', {
       evidence: observed,
       matches: [],
       reason: 'unknown-version',
-    };
+    });
   }
 
-  const matchingEntries = LOCAL_KEV_SNAPSHOT.entries.filter((entry) => {
+  const matchingEntries = source.entries.filter((entry) => {
     if (entry.product !== observed.product) return false;
     return entry.affectedRanges.some((range) => {
       const afterStart = compareVersions(observed.version!, range.from);
-      const beforeEnd = compareVersions(observed.version!, range.through);
-      return afterStart !== null && beforeEnd !== null && afterStart >= 0 && beforeEnd <= 0;
+      const upperBound = range.lessThan ?? range.through;
+      const beforeEnd = upperBound ? compareVersions(observed.version!, upperBound) : null;
+      if (afterStart === null || beforeEnd === null || afterStart < 0) return false;
+      return range.lessThan ? beforeEnd < 0 : beforeEnd <= 0;
     });
   });
 
-  return {
-    status: matchingEntries.length ? 'matched' : 'no-match',
+  return result(matchingEntries.length ? 'matched' : 'no-match', {
     evidence: observed,
     matches: matchingEntries,
-  };
+  });
+}
+
+export function kevStatusLabel(result: KevContextResult) {
+  if (result.snapshotStale) {
+    return result.status === 'matched'
+      ? 'Possible match in a stale local snapshot'
+      : 'Local vulnerability data is stale';
+  }
+  if (result.status === 'matched') return 'Possible match in the local snapshot';
+  if (result.status === 'no-match') return 'No matching entry in this snapshot';
+  if (result.reason === 'weak') return 'Evidence was too weak to match';
+  if (result.reason === 'ambiguous') return 'Evidence was ambiguous, so no match was made';
+  if (result.reason === 'unknown-version') return 'No exact version was available for matching';
+  return 'No product and version evidence was available';
 }
 
 export function evidenceSourceLabel(source: SoftwareEvidence['evidenceSource']) {

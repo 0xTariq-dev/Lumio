@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 import { z } from "zod";
 import { GetScanResponse } from "@workspace/api-zod";
+import { safeLastEventId } from "./analysis-sse";
 
 type ScanSnapshot = z.infer<typeof GetScanResponse>;
 
@@ -479,8 +480,9 @@ export async function openWorkerScanEvents(
 
   try {
     const headers = workerHeaders(config.token, "text/event-stream");
-    if (lastEventId && /^[\w-]{1,128}$/.test(lastEventId)) {
-      Object.assign(headers, { "last-event-id": lastEventId });
+    const safeEventId = safeLastEventId(lastEventId);
+    if (safeEventId) {
+      Object.assign(headers, { "last-event-id": safeEventId });
     }
     return await fetch(
       endpointUrl(

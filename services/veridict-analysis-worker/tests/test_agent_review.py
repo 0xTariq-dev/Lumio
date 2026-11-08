@@ -179,6 +179,38 @@ class AgentReviewTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(check["status"], "skipped")
             self.assertEqual(self.analyzer.last_request.emailBase64, "")
 
+    async def test_reconnected_event_stream_replays_review_state_after_last_event_id(self):
+        self.make_app()
+        async with self.app.router.lifespan_context(self.app):
+            scan_id = await self.start_email_review()
+            record = self.app.state.scan_manager.get_record(str(scan_id))
+            review_ready = next(event for event in record.events if event.name == "review_ready")
+            reconnect_from = review_ready.event_id - 1
+
+            stream = asyncio.create_task(
+                asgi_request(
+                    self.app,
+                    "GET",
+                    f"/v1/scans/{scan_id}/events",
+                    headers={
+                        **AUTH,
+                        "last-event-id": str(reconnect_from),
+                    },
+                )
+            )
+            await asyncio.sleep(0.02)
+            status, body = await command(self.app, scan_id, {"command": "finalize"})
+            self.assertEqual(status, 202)
+            stream_status, _, events_body = await stream
+
+            self.assertEqual(stream_status, 200)
+            rendered = events_body.decode()
+            self.assertIn(
+                f"id: {review_ready.event_id}\nevent: review_ready\n",
+                rendered,
+            )
+            self.assertIn("event: completed\n", rendered)
+
     async def test_approved_link_share_and_visit_run_in_worker_with_redacted_context(self):
         self.make_app()
         async with self.app.router.lifespan_context(self.app):

@@ -22,6 +22,8 @@ _SECRET_LIKE = re.compile(r"^[A-Za-z0-9_\-+=%.]{20,}$")
 _HAS_DIGIT_AND_LETTER = re.compile(r"(?=.*\d)(?=.*[A-Za-z])")
 _LONG_NUMBER = re.compile(r"^\d{6,}$")
 _EMAIL_LIKE = re.compile(r"[^@\s/]+@[^@\s/]+")
+_URL_IN_TEXT = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+_TOKEN_IN_TEXT = re.compile(r"(?<![A-Za-z0-9])([A-Za-z0-9_\-+=%.]{20,})(?![A-Za-z0-9])")
 
 
 def _clean_text(value: Any, limit: int) -> str:
@@ -29,7 +31,33 @@ def _clean_text(value: Any, limit: int) -> str:
         return ""
     text = _CONTROL_CHARS.sub(" ", value)
     text = re.sub(r"\s+", " ", text).strip()
+
+    def replace_url(match: re.Match[str]) -> str:
+        raw_url = match.group(0)
+        trailing = ""
+        while raw_url and raw_url[-1] in ".,;:!?)]}":
+            trailing = raw_url[-1] + trailing
+            raw_url = raw_url[:-1]
+        try:
+            parts = urlsplit(raw_url)
+        except ValueError:
+            return f"[link]{trailing}"
+        if not parts.hostname:
+            return f"[link]{trailing}"
+        return f"{parts.hostname.lower()}{redact_link_path(raw_url)}{trailing}"
+
+    text = _URL_IN_TEXT.sub(replace_url, text)
     text = _EMAIL_LIKE.sub(REDACTED, text)
+
+    def replace_token(match: re.Match[str]) -> str:
+        token = match.group(1)
+        if _SECRET_LIKE.fullmatch(token) and (
+            _HAS_DIGIT_AND_LETTER.search(token) or len(token) >= 32
+        ):
+            return REDACTED
+        return token
+
+    text = _TOKEN_IN_TEXT.sub(replace_token, text)
     return text[:limit]
 
 

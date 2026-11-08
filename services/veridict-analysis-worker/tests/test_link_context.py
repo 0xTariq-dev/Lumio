@@ -30,6 +30,24 @@ class LinkContextTests(unittest.TestCase):
         self.assertNotIn("me@x.com", anchor)
         self.assertNotIn("\n", anchor)
 
+    def test_anchor_urls_and_token_like_text_are_redacted(self):
+        secret = "AbCdEf1234567890GhIjKlMn"
+        links = [{
+            "linkId": "a",
+            "anchorText": (
+                "Open https://user:pw@x.test/reset/1234567"
+                "?token=query-secret#fragment and " + secret
+            ),
+        }]
+        result = build_link_context(
+            links,
+            {"a": "https://x.test/reset/1234567?raw=never-share"},
+        )
+        anchor = result[0]["anchor"]
+        self.assertIn("x.test/reset/[redacted]", anchor)
+        for secret_part in ("user", "pw", "query-secret", "fragment", "1234567", secret):
+            self.assertNotIn(secret_part, anchor)
+
     def test_skips_unknown_links_and_bad_input(self):
         self.assertEqual(build_link_context(None, {}), [])
         self.assertEqual(build_link_context([{"linkId": "a"}], {}), [])
