@@ -3,22 +3,219 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
-    <title>Veridict</title>
-    <meta name="description" content="Veridict — built on Replit. Update this description to reflect the app." />
+    <title>Lumio — Bringing threats to light</title>
+    <meta name="description" content="Lumio — Bringing threats to light. Investigate first, click later. A consent-based analyzer for suspicious URLs and email that reports observable evidence and coverage limits." />
     <meta name="robots" content="index, follow" />
-    <meta property="og:title" content="Veridict" />
-    <meta property="og:description" content="Veridict — built on Replit. Update this description to reflect the app." />
+    <meta property="og:title" content="Lumio — Bringing threats to light" />
+    <meta property="og:description" content="Investigate suspicious URLs and email with a consent-based analyzer that reports observable evidence and coverage limits." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Veridict" />
-    <meta name="twitter:description" content="Veridict — built on Replit. Update this description to reflect the app." />
+    <meta name="twitter:title" content="Lumio — Bringing threats to light" />
+    <meta name="twitter:description" content="Investigate suspicious URLs and email with a consent-based analyzer that reports observable evidence and coverage limits." />
+    <link rel="icon" type="image/svg+xml" sizes="48x48" href="/lumio-icon-48.svg" />
+    <link rel="icon" type="image/svg+xml" sizes="96x96" href="/lumio-icon-96.svg" />
+    <link rel="icon" type="image/svg+xml" sizes="144x144" href="/lumio-icon-144.svg" />
+    <link rel="icon" type="image/svg+xml" sizes="240x240" href="/lumio-icon-240.svg" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+      .lumio-boot,
+      .lumio-boot * {
+        box-sizing: border-box;
+      }
+      .lumio-boot {
+        min-height: 100vh;
+        background: #fafafa;
+        color: #18181b;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+      }
+      .lumio-boot-header {
+        border-bottom: 1px solid #e4e4e7;
+        background: #fff;
+      }
+      .lumio-boot-header-inner {
+        display: flex;
+        max-width: 1152px;
+        margin: 0 auto;
+        padding: 16px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .lumio-boot-brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .lumio-boot-mark {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+      }
+      .lumio-boot-bar {
+        border-radius: 6px;
+        background: #e4e4e7;
+        animation: lumio-boot-pulse 1.6s ease-in-out infinite;
+      }
+      .lumio-boot-wordmark {
+        color: #18181b;
+        font-size: 18px;
+        font-weight: 600;
+        line-height: 1;
+      }
+      .lumio-boot-badge {
+        display: flex;
+        height: 32px;
+        padding: 0 12px;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid #e4e4e7;
+        border-radius: 999px;
+        background: #f4f4f5;
+        color: #52525b;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .lumio-boot-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #71717a;
+      }
+      .lumio-boot-content {
+        max-width: 1152px;
+        margin: 0 auto;
+        padding: 32px 16px 64px;
+      }
+      .lumio-boot-hero {
+        max-width: 768px;
+        margin-bottom: 32px;
+      }
+      .lumio-boot-title {
+        max-width: 600px;
+        height: 76px;
+        background: linear-gradient(#e4e4e7 0 0) left top / 82% 34px no-repeat,
+          linear-gradient(#e4e4e7 0 0) left bottom / 68% 34px no-repeat;
+        border-radius: 6px;
+        animation: lumio-boot-pulse 1.6s ease-in-out infinite;
+      }
+      .lumio-boot-copy {
+        width: min(100%, 600px);
+        height: 38px;
+        margin-top: 14px;
+        background: linear-gradient(#e4e4e7 0 0) left top / 100% 15px no-repeat,
+          linear-gradient(#e4e4e7 0 0) left bottom / 76% 15px no-repeat;
+        border-radius: 6px;
+        animation: lumio-boot-pulse 1.6s ease-in-out infinite;
+      }
+      .lumio-boot-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        align-items: start;
+        gap: 24px;
+      }
+      .lumio-boot-card {
+        min-height: 300px;
+        padding: 20px;
+        border: 1px solid #e4e4e7;
+        border-radius: 12px;
+        background: #fff;
+        box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+      }
+      .lumio-boot-card-title {
+        width: 72%;
+        height: 24px;
+      }
+      .lumio-boot-control {
+        height: 44px;
+        margin-top: 20px;
+      }
+      .lumio-boot-field {
+        height: 48px;
+        margin-top: 20px;
+      }
+      .lumio-boot-consent {
+        height: 64px;
+        margin-top: 16px;
+      }
+      .lumio-boot-submit {
+        width: 100%;
+        height: 44px;
+        margin-top: 16px;
+      }
+      .lumio-boot-empty {
+        height: 168px;
+        margin-top: 32px;
+      }
+      @keyframes lumio-boot-pulse {
+        50% {
+          opacity: 0.58;
+        }
+      }
+      @media (min-width: 640px) {
+        .lumio-boot-header-inner {
+          padding-right: 24px;
+          padding-left: 24px;
+        }
+        .lumio-boot-content {
+          padding: 48px 24px 64px;
+        }
+        .lumio-boot-card {
+          padding: 24px;
+        }
+      }
+      @media (min-width: 1024px) {
+        .lumio-boot-grid {
+          grid-template-columns: minmax(0, 0.92fr) minmax(420px, 1.08fr);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .lumio-boot-bar,
+        .lumio-boot-title,
+        .lumio-boot-copy {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <main class="lumio-boot" aria-busy="true" data-testid="skeleton-analyzer-startup">
+        <header class="lumio-boot-header">
+          <div class="lumio-boot-header-inner">
+            <div class="lumio-boot-brand">
+              <span class="lumio-boot-mark lumio-boot-bar" aria-hidden="true"></span>
+              <span class="lumio-boot-wordmark">Lumio</span>
+            </div>
+            <span class="lumio-boot-badge" role="status" aria-live="polite">
+              <span class="lumio-boot-dot" aria-hidden="true"></span>
+              Loading analyzer
+            </span>
+          </div>
+        </header>
+        <div class="lumio-boot-content">
+          <section class="lumio-boot-hero" aria-hidden="true">
+            <div class="lumio-boot-title"></div>
+            <div class="lumio-boot-copy"></div>
+          </section>
+          <div class="lumio-boot-grid">
+            <section class="lumio-boot-card" aria-hidden="true">
+              <div class="lumio-boot-card-title lumio-boot-bar"></div>
+              <div class="lumio-boot-control lumio-boot-bar"></div>
+              <div class="lumio-boot-field lumio-boot-bar"></div>
+              <div class="lumio-boot-consent lumio-boot-bar"></div>
+              <div class="lumio-boot-submit lumio-boot-bar"></div>
+            </section>
+            <section class="lumio-boot-card" aria-hidden="true">
+              <div class="lumio-boot-card-title lumio-boot-bar"></div>
+              <div class="lumio-boot-empty lumio-boot-bar"></div>
+            </section>
+          </div>
+        </div>
+      </main>
+      <noscript>
+        <p>JavaScript is required to use the Lumio analyzer.</p>
+      </noscript>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

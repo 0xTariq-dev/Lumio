@@ -65,7 +65,6 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 }
-
 /* LIGHT MODE */
 :root {
   --button-outline: rgba(0, 0, 0, 0.1);
@@ -189,7 +188,6 @@
       calc(l + var(--opaque-button-border-intensity)) / alpha
   );
 }
-
 .dark {
   --button-outline: rgba(255, 255, 255, 0.1);
   --badge-outline: rgba(255, 255, 255, 0.05);
@@ -374,54 +372,5 @@
   .border.active-elevate-2:not(.no-active-interaction-elevate)::after,
   .border.hover-elevate:not(.no-hover-interaction-elevate)::after {
     inset: -1px;
-  }
-}
-
-@media print {
-  @page {
-    margin: 14mm;
-  }
-
-  html,
-  body {
-    height: auto !important;
-    overflow: visible !important;
-    background: #fff !important;
-  }
-
-  body * {
-    visibility: hidden !important;
-  }
-
-  #veridict-print-report,
-  #veridict-print-report * {
-    visibility: visible !important;
-  }
-
-  #veridict-print-report {
-    position: absolute !important;
-    top: 0 !important;
-    left: 0 !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    margin: 0 !important;
-    overflow: visible !important;
-    border: 0 !important;
-    border-radius: 0 !important;
-    background: #fff !important;
-    color: #111 !important;
-    box-shadow: none !important;
-  }
-
-  #veridict-print-report [data-testid="report-actions"] {
-    display: none !important;
-  }
-
-  #veridict-print-report .text-muted-foreground {
-    color: #555 !important;
-  }
-
-  #veridict-print-report [data-testid^="finding-"] {
-    break-inside: avoid;
   }
 }

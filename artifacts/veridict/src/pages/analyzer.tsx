@@ -1,4 +1,4 @@
-import { type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, type FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useGetAnalysisStatus,
   getGetAnalysisStatusQueryKey,
@@ -12,7 +12,6 @@ import type { ScanAccepted, ScanProgress, ScanReport } from '@workspace/api-clie
 import {
   AlertCircle,
   ArrowUpRight,
-  Check,
   CheckCircle2,
   CircleAlert,
   Clock3,
@@ -27,31 +26,21 @@ import {
   Upload,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
-import {
-  Stepper,
-  StepperIndicator,
-  StepperItem,
-  StepperNav,
-  StepperSeparator,
-  StepperTrigger,
-} from '@/components/reui/stepper';
-import { streamReportExplanation } from '@/lib/explanation-stream';
+import { Skeleton } from '@/components/ui/skeleton';
 
 type InputMode = 'url' | 'email';
 type StreamFailure = { message?: string };
 
 const MAX_EMAIL_BYTES = 10 * 1024 * 1024;
-
-function stageIndex(stage?: string) {
-  if (!stage) return 1;
-  if (stage === 'validating' || stage === 'queued') return 1;
-  if (stage === 'building_report' || stage === 'completed' || stage === 'failed') return 3;
-  return 2;
-}
+const ScanProgressStepper = lazy(() =>
+  import('@/components/examples/c-stepper-44').then(({ Pattern }) => ({
+    default: Pattern,
+  })),
+);
 
 type ScanPlanStep = NonNullable<ScanProgress['plan']>[number];
 
-const planStepLabels: Record<ScanPlanStep['id'], string> = {
+const planStepLabels: Partial<Record<ScanPlanStep['id'], string>> = {
   consent_target: 'Validate consent and public target',
   sandbox: 'Start an isolated sandbox',
   http: 'Inspect HTTP response and redirects',
@@ -62,22 +51,29 @@ const planStepLabels: Record<ScanPlanStep['id'], string> = {
 };
 
 function planStepLabel(id: ScanPlanStep['id'], type: ScanReport['type']) {
+  const emailLabels: Partial<Record<ScanPlanStep['id'], string>> = {
+    consent_target: 'Validate consent and email file',
+    sandbox: 'Start an isolated email sandbox',
+    email_parse: 'Parse message headers, body, and links',
+    report: 'Assemble the evidence report',
+  };
   if (type === 'email') {
-    const emailLabels: Partial<Record<ScanPlanStep['id'], string>> = {
-      consent_target: 'Validate consent and email file',
-      sandbox: 'Start an isolated email sandbox',
-      email_parse: 'Parse message headers, body, and links',
-      report: 'Assemble the evidence report',
-    };
-    return emailLabels[id] ?? planStepLabels[id];
+    const emailLabel = emailLabels[id];
+    if (emailLabel) return emailLabel;
   }
   if (type === 'email_link' && id === 'consent_target') {
     return 'Validate selected-link consent and target';
   }
-  return planStepLabels[id];
+  return planStepLabels[id] ?? humanizePlanId(String(id));
 }
 
-const planStatusLabels: Record<ScanPlanStep['status'], string> = {
+function humanizePlanId(value: string) {
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+const planStatusLabels: Partial<Record<ScanPlanStep['status'], string>> = {
   pending: 'Waiting',
   running: 'In progress',
   completed: 'Completed',
@@ -86,7 +82,7 @@ const planStatusLabels: Record<ScanPlanStep['status'], string> = {
   blocked: 'Blocked',
 };
 
-const planReasonLabels: Record<NonNullable<ScanPlanStep['reasonCode']>, string> = {
+const planReasonLabels: Partial<Record<NonNullable<ScanPlanStep['reasonCode']>, string>> = {
   consent_checked: 'Consent and public-target policy passed before dispatch.',
   no_browser_required: 'Static signals did not meet the browser-inspection criteria.',
   redirect_blocked: 'The redirect policy blocked browser navigation.',
@@ -103,7 +99,11 @@ function planReasonLabel(reason: NonNullable<ScanPlanStep['reasonCode']>, type: 
   if (type === 'email' && reason === 'no_browser_required') {
     return 'Links are only visited after separate consent.';
   }
-  return planReasonLabels[reason];
+  return planReasonLabels[reason] ?? humanizePlanId(String(reason));
+}
+
+function planStatusLabel(status: ScanPlanStep['status']) {
+  return planStatusLabels[status] ?? humanizePlanId(String(status));
 }
 
 function ExecutionPlanList({
@@ -119,8 +119,8 @@ function ExecutionPlanList({
     <section className="mt-5" aria-label="Execution plan" data-testid={testId}>
       <h3 className="text-sm font-semibold">Execution plan</h3>
       <ol className="mt-3 space-y-2">
-        {steps.map((step) => (
-          <li key={step.id} className="flex items-start gap-3 rounded-lg border border-border px-3 py-2.5">
+        {steps.map((step, index) => (
+          <li key={`${step.id}-${index}`} className="flex items-start gap-3 rounded-lg border border-border px-3 py-2.5">
             <span className={`mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full text-xs ${
               step.status === 'completed' ? 'bg-emerald-600/10 text-emerald-700'
                 : step.status === 'running' ? 'bg-primary/10 text-primary'
@@ -134,7 +134,7 @@ function ExecutionPlanList({
               <p className="text-sm font-medium">{planStepLabel(step.id, type)}</p>
               {step.reasonCode && <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{planReasonLabel(step.reasonCode, type)}</p>}
             </div>
-            <span className="shrink-0 pt-0.5 text-xs text-muted-foreground">{planStatusLabels[step.status]}</span>
+            <span className="shrink-0 pt-0.5 text-xs text-muted-foreground">{planStatusLabel(step.status)}</span>
           </li>
         ))}
       </ol>
@@ -188,7 +188,7 @@ function escapeHtml(value: unknown) {
 
 function reportHtml(report: ScanReport, explanationText = '') {
   const executionPlan = (report.executionPlan ?? []).map((step) => `
-    <li><strong>${escapeHtml(planStepLabel(step.id, report.type))}</strong> — ${escapeHtml(planStatusLabels[step.status])}${step.reasonCode ? `: ${escapeHtml(planReasonLabel(step.reasonCode, report.type))}` : ''}</li>`).join('');
+    <li><strong>${escapeHtml(planStepLabel(step.id, report.type))}</strong> — ${escapeHtml(planStatusLabel(step.status))}${step.reasonCode ? `: ${escapeHtml(planReasonLabel(step.reasonCode, report.type))}` : ''}</li>`).join('');
   const findings = report.findings.map((finding) => `
     <article class="finding">
       <div class="meta">${escapeHtml(finding.severity)} · ${escapeHtml(finding.strength)} · ${escapeHtml(finding.source.replace(/_/g, ' '))}</div>
@@ -204,22 +204,74 @@ function reportHtml(report: ScanReport, explanationText = '') {
   const explanation = explanationText
     ? `<section class="explanation"><h2>Optional AI explanation</h2><p>${escapeHtml(explanationText)}</p><p class="muted">Model-generated explanation only. It does not change the deterministic risk band. Only a redacted evidence summary was sent to Vultr; prompt-retention and model-training terms are unverified.</p></section>`
     : '';
-  return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Veridict analysis report</title><style>
-    *{box-sizing:border-box}body{margin:0;background:#f6f6f7;color:#18181b;font:15px/1.6 system-ui,sans-serif}
-    main{max-width:860px;margin:40px auto;padding:36px;background:white;border:1px solid #e4e4e7;border-radius:14px}
-    h1{font-size:30px;margin:8px 0}h2{font-size:18px;margin:8px 0}.meta,.muted{color:#71717a;font-size:13px}
-    .band{display:inline-block;border:1px solid #d4d4d8;border-radius:999px;padding:3px 12px;font-weight:650}
-    .finding{border-top:1px solid #e4e4e7;padding:18px 0}.explanation{border-top:1px solid #e4e4e7;margin-top:22px;padding-top:16px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f4f5;padding:10px;border-radius:8px}
-    li{margin:7px 0}footer{border-top:1px solid #e4e4e7;margin-top:24px;padding-top:16px;color:#71717a;font-size:12px}
-    @media print{body{background:white}main{margin:0 auto;border:0;padding:0}}
-  </style><main><div class="meta">VERIDICT · EVIDENCE REPORT</div><h1>${escapeHtml(riskLabel(report.riskBand))} risk</h1><p class="meta">Completed ${escapeHtml(formatDate(report.completedAt))} · Rule set ${escapeHtml(report.ruleSetVersion)}</p>
+  return `<!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width">
+      <title>Lumio analysis report</title>
+      <style>
+        *{box-sizing:border-box}
+        html,body{min-height:100%;margin:0}
+        body{background:#f6f6f7;color:#18181b;font:15px/1.6 system-ui,sans-serif;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+        main{width:calc(100% - 32px);max-width:860px;margin:40px auto;padding:36px;background:#fff;border:1px solid #e4e4e7;border-radius:14px}
+        h1{font-size:30px;margin:8px 0}h2{font-size:18px;margin:8px 0;break-after:avoid-page}
+        .meta,.muted{color:#71717a;font-size:13px}
+        .band{display:inline-block;border:1px solid #d4d4d8;border-radius:999px;padding:3px 12px;font-weight:650}
+        .finding{border-top:1px solid #e4e4e7;padding:18px 0}
+        .explanation{border-top:1px solid #e4e4e7;margin-top:22px;padding-top:16px}
+        pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f4f5;padding:10px;border-radius:8px}
+        li{margin:7px 0;overflow-wrap:anywhere}footer{border-top:1px solid #e4e4e7;margin-top:24px;padding-top:16px;color:#71717a;font-size:12px;overflow-wrap:anywhere}
+        @media screen and (max-width:720px){main{margin:16px auto;padding:24px}}
+        @media print{
+          @page{margin:14mm}
+          html,body{height:auto;background:#fff}
+          main{width:100%;max-width:none;margin:0;padding:0;border:0;border-radius:0}
+          .finding,.explanation,footer{break-inside:avoid-page;page-break-inside:avoid}
+          li{break-inside:avoid-page;page-break-inside:avoid}
+        }
+      </style>
+    </head>
+    <body>
+      <main><div class="meta">LUMIO · EVIDENCE REPORT</div><h1>${escapeHtml(riskLabel(report.riskBand))} risk</h1><p class="meta">Completed ${escapeHtml(formatDate(report.completedAt))} · Rule set ${escapeHtml(report.ruleSetVersion)}</p>
     ${executionPlan ? `<h2>Execution plan</h2><ol>${executionPlan}</ol>` : ''}
     <h2>Evidence and findings</h2>${findings || '<p>No findings were returned by the analyzer.</p>'}
     <h2>Coverage</h2><p>${report.coverage.sufficient ? 'Coverage marked sufficient by the analyzer.' : 'Coverage is limited; interpret this result with caution.'}</p><ul>${checks}</ul>
     ${explanation}
     ${links ? `<h2>Links found in email</h2><ul>${links}</ul>` : ''}
-    <footer>This report contains only the evidence returned by Veridict. It is not a guarantee that a message or URL is safe.</footer>
-  </main></html>`;
+    <footer>This report contains only the evidence returned by Lumio. It is not a guarantee that a message or URL is safe.</footer>
+      </main>
+    </body>
+  </html>`;
+}
+
+function ScanProgressLoadingSkeleton() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      aria-busy="true"
+      data-testid="skeleton-scan-progress"
+      className="space-y-3"
+    >
+      <span className="sr-only">Loading scan progress steps</span>
+      <div
+        aria-hidden="true"
+        className="grid gap-4 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]"
+      >
+        <div className="space-y-3">
+          <Skeleton className="h-11 w-full" />
+          <Skeleton className="h-11 w-5/6" />
+          <Skeleton className="h-11 w-4/5" />
+        </div>
+        <div className="space-y-3">
+          <Skeleton className="h-4 w-24" />
+          <Skeleton className="h-6 w-full" />
+          <Skeleton className="h-11 w-40" />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function AnalyzerPage() {
@@ -264,7 +316,6 @@ export default function AnalyzerPage() {
   const workerUnavailable = status?.workerStatus === 'unavailable' || status?.scannerAvailable === false;
   const busy = createUrl.isPending || createEmail.isPending || createSelectedLink.isPending ||
     (!!scanAccepted && !streamFinished && !report);
-  const currentStage = stageIndex(progress?.stage);
   const emailLinks = useMemo(() => (emailReport?.links ?? []).slice(0, 50), [emailReport]);
   const activeReport = report;
 
@@ -308,7 +359,7 @@ export default function AnalyzerPage() {
       source.close();
     });
     source.onerror = () => {
-      if (!streamFinished) setStreamError('Live updates were interrupted. Veridict is checking the scan status.');
+      if (!streamFinished) setStreamError('Live updates were interrupted. Lumio is checking the scan status.');
     };
     return () => source.close();
   }, [scanAccepted, streamFinished, queryClient]);
@@ -428,11 +479,36 @@ export default function AnalyzerPage() {
     const objectUrl = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = objectUrl;
-    anchor.download = `veridict-report-${activeReport.scanId}.html`;
+    anchor.download = `lumio-report-${activeReport.scanId}.html`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  }
+
+  function printReport() {
+    if (!activeReport) return false;
+    let printWindow: Window | null = null;
+    try {
+      printWindow = window.open('', '_blank');
+      if (!printWindow) return false;
+      const printableWindow = printWindow;
+      printableWindow.document.open();
+      printableWindow.document.write(reportHtml(activeReport, explanationText));
+      printableWindow.document.close();
+      printableWindow.opener = null;
+      printableWindow.requestAnimationFrame(() => {
+        printableWindow.requestAnimationFrame(() => {
+          if (printableWindow.closed) return;
+          printableWindow.focus();
+          printableWindow.print();
+        });
+      });
+      return true;
+    } catch {
+      printWindow?.close();
+      return false;
+    }
   }
 
   async function requestExplanation() {
@@ -447,6 +523,7 @@ export default function AnalyzerPage() {
     setExplanationError('');
     setExplanationStatus('streaming');
     try {
+      const { streamReportExplanation } = await import('@/lib/explanation-stream');
       await streamReportExplanation(
         activeReport.scanId,
         activeReport.explanationToken,
@@ -486,9 +563,12 @@ export default function AnalyzerPage() {
     <div className="min-h-[100dvh] bg-background text-foreground">
       <header className="border-b border-border bg-card">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <a href="/" data-testid="link-veridict-home" className="flex items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Veridict home">
-            <span className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"><ShieldCheck className="size-5" aria-hidden="true" /></span>
-            <span className="text-lg font-semibold tracking-tight">Veridict</span>
+          <a href="/" data-testid="link-lumio-home" className="flex min-h-11 items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Lumio home">
+            <span className="flex size-9 shrink-0 items-center justify-center" aria-hidden="true">
+              <img src="/lumio-mark-96.gif" alt="" className="size-full object-contain motion-reduce:hidden" />
+              <img src="/lumio-icon-48.svg" alt="" className="hidden size-full object-contain motion-reduce:block" />
+            </span>
+            <span className="text-lg font-semibold tracking-tight">Lumio</span>
           </a>
           <div className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium ${workerUnavailable ? 'border-destructive/30 bg-destructive/5 text-destructive' : 'border-border bg-muted/60 text-muted-foreground'}`}
             role="status" aria-live="polite" data-testid="status-analyzer-readiness">
@@ -500,12 +580,9 @@ export default function AnalyzerPage() {
 
       <main className="mx-auto max-w-6xl px-4 pb-16 pt-8 sm:px-6 sm:pt-12">
         <section className="mb-8 max-w-3xl">
-          <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-            <LockKeyhole className="size-3.5" aria-hidden="true" /> Private, consent-based checks
-          </div>
-          <h1 className="max-w-2xl text-3xl font-semibold tracking-tight sm:text-4xl">Check the evidence before you click.</h1>
+          <h1 className="max-w-2xl text-balance text-3xl font-semibold tracking-tight sm:text-4xl">Bringing threats to light. Investigate first, click later.</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
-            Analyze a suspicious URL or email with an isolated worker. Veridict reports observable evidence and coverage limits—not a promise of safety.
+            Private, consent-based checks of suspicious URLs and email run in an isolated worker. Lumio reports observable evidence and coverage limits—not a promise of safety.
           </p>
         </section>
 
@@ -514,18 +591,17 @@ export default function AnalyzerPage() {
             <div className="border-b border-border px-5 py-5 sm:px-6">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.13em] text-muted-foreground">Start an analysis</p>
-                  <h2 id="analyzer-title" className="mt-1 text-xl font-semibold tracking-tight">What would you like to check?</h2>
+                  <h2 id="analyzer-title" className="text-balance text-xl font-semibold tracking-tight">What would you like to check?</h2>
                 </div>
                 <span className="hidden rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground sm:inline-flex">No account required</span>
               </div>
               <div className="mt-5 grid grid-cols-2 rounded-lg bg-muted p-1" role="group" aria-label="Analysis type">
                 <button type="button" aria-pressed={mode === 'url'} onClick={() => { setMode('url'); setFormError(''); }}
-                  data-testid="tab-analyze-url" className={`min-h-10 rounded-md px-3 text-sm font-medium transition-colors ${mode === 'url' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                  data-testid="tab-analyze-url" className={`min-h-11 rounded-md px-3 text-sm font-medium transition-colors ${mode === 'url' ? 'bg-card text-foreground shadow-sm' : 'text-foreground/80 hover:text-foreground'}`}>
                   <Globe2 className="mr-2 inline size-4" aria-hidden="true" /> URL
                 </button>
                 <button type="button" aria-pressed={mode === 'email'} onClick={() => { setMode('email'); setFormError(''); }}
-                  data-testid="tab-analyze-email" className={`min-h-10 rounded-md px-3 text-sm font-medium transition-colors ${mode === 'email' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+                  data-testid="tab-analyze-email" className={`min-h-11 rounded-md px-3 text-sm font-medium transition-colors ${mode === 'email' ? 'bg-card text-foreground shadow-sm' : 'text-foreground/80 hover:text-foreground'}`}>
                   <FileText className="mr-2 inline size-4" aria-hidden="true" /> Email file
                 </button>
               </div>
@@ -540,9 +616,9 @@ export default function AnalyzerPage() {
                     <input id="url-input" type="text" inputMode="url" autoComplete="url" value={url} maxLength={2048}
                       onChange={(event) => setUrl(event.target.value)} placeholder="example.com or https://example.com/path"
                       aria-describedby="url-help" data-testid="input-suspicious-url"
-                      className="min-w-0 flex-1 bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground/70" />
+                      className="min-w-0 flex-1 bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground" />
                   </div>
-                  <p id="url-help" className="mt-2 text-xs text-muted-foreground">Bare domains and IPs use HTTPS. Include http:// to request HTTP. Public targets only; maximum 2,048 characters.</p>
+                  <p id="url-help" className="mt-2 text-pretty text-xs text-muted-foreground">Bare domains and IPs use HTTPS. Include http:// to request HTTP. Public targets only; maximum 2,048 characters.</p>
                   <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-muted/30 p-3.5 text-sm leading-5">
                     <input type="checkbox" checked={urlConsent} onChange={(event) => setUrlConsent(event.target.checked)}
                       data-testid="checkbox-url-consent" className="mt-0.5 size-4 shrink-0 accent-foreground" />
@@ -589,7 +665,7 @@ export default function AnalyzerPage() {
                   <div><p className="text-sm font-semibold">Analysis is temporarily unavailable</p><p className="mt-1 text-sm leading-5 text-muted-foreground">The isolated analyzer is unavailable. No scan has been started, and no result can be produced right now.</p></div>
                 </div>
               )}
-              {statusQuery.isError && <div role="alert" data-testid="error-readiness" className="mt-3 flex items-center justify-between gap-3 text-sm text-destructive"><span>Analyzer readiness could not be confirmed. Retry before submitting a scan.</span><button type="button" onClick={() => void statusQuery.refetch()} data-testid="button-retry-readiness" className="shrink-0 rounded-md border border-destructive/30 px-2.5 py-1.5 font-medium hover:bg-destructive/5">Retry</button></div>}
+              {statusQuery.isError && <div role="alert" data-testid="error-readiness" className="mt-3 flex items-center justify-between gap-3 text-sm text-destructive"><span>Analyzer readiness could not be confirmed. Retry before submitting a scan.</span><button type="button" onClick={() => void statusQuery.refetch()} data-testid="button-retry-readiness" className="min-h-11 shrink-0 rounded-md border border-destructive/30 px-2.5 py-1.5 font-medium hover:bg-destructive/5">Retry</button></div>}
 
               <div className="mt-5 grid grid-cols-2 gap-3 border-t border-border pt-4 text-xs text-muted-foreground">
                 <div className="flex items-center gap-2"><LockKeyhole className="size-3.5" aria-hidden="true" /> Consent before every scan</div>
@@ -606,34 +682,30 @@ export default function AnalyzerPage() {
                   <LoaderCircle className="mt-1 size-5 animate-spin text-muted-foreground" aria-hidden="true" />
                 </div>
                 <div className="mt-7">
-                  <Stepper value={currentStage} className="w-full" indicators={{ completed: <Check className="size-3.5" />, loading: <LoaderCircle className="size-3.5 animate-spin" /> }}>
-                    <StepperNav className="mb-5">
-                      {[1, 2, 3].map((step) => (
-                        <StepperItem key={step} step={step} loading={step === currentStage}>
-                          <StepperTrigger type="button" tabIndex={-1} aria-label={`Analysis step ${step}`} className="cursor-default">
-                            <StepperIndicator className="size-7 border-2 border-muted bg-card text-muted-foreground data-[state=active]:border-primary data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=completed]:border-primary data-[state=completed]:bg-primary data-[state=completed]:text-primary-foreground">{step}</StepperIndicator>
-                          </StepperTrigger>
-                          {step < 3 && <StepperSeparator className="mx-2 h-0.5 data-[state=completed]:bg-primary" />}
-                        </StepperItem>
-                      ))}
-                    </StepperNav>
-                  </Stepper>
-                  <div className="grid grid-cols-3 gap-2 text-xs">
-                    <span className={currentStage >= 1 ? 'font-medium text-foreground' : 'text-muted-foreground'}>Request accepted</span>
-                    <span className={`text-center ${currentStage >= 2 ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>Isolated checks</span>
-                    <span className={`text-right ${currentStage >= 3 ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>Building report</span>
-                  </div>
+                  <Suspense fallback={<ScanProgressLoadingSkeleton />}>
+                    <ScanProgressStepper
+                      steps={(progress?.plan ?? []).map((step) => ({
+                        id: String(step.id),
+                        label: planStepLabel(step.id, scanType),
+                        status: String(step.status),
+                        details: step.reasonCode
+                          ? planReasonLabel(step.reasonCode, scanType)
+                          : undefined,
+                      }))}
+                      testId="live-execution-plan"
+                    />
+                  </Suspense>
                 </div>
                 <div className="mt-5 rounded-lg border border-border bg-muted/30 px-4 py-3">
                   <p className="text-sm font-medium" data-testid="text-progress-message">{progressMessage}</p>
                     <p className="mt-1 text-xs text-muted-foreground">{progress ? `${progress.completedSteps} of ${progress.totalSteps} plan steps resolved` : 'Waiting for the scan service to publish its execution plan.'}</p>
                   {streamError && <p className="mt-2 text-xs text-muted-foreground" data-testid="status-stream-recovery">{streamError}</p>}
                 </div>
-                  {progress?.plan && <ExecutionPlanList steps={progress.plan} testId="live-execution-plan" type={scanType} />}
                 {scanQuery.isError && <p className="mt-3 text-sm text-muted-foreground">Unable to recover the latest status. Waiting for the live scan stream.</p>}
               </div>
             ) : activeReport ? (
               <ReportView report={activeReport} onExport={exportReport} emailLinks={emailLinks}
+                onPrint={printReport}
                 selectedLinkId={selectedLinkId} setSelectedLinkId={(id) => { setSelectedLinkId(id); setLinkConsent(false); setFormError(''); }}
                 linkConsent={linkConsent} setLinkConsent={setLinkConsent} onScanLink={scanSelectedLink}
                 selectedLinkPending={createSelectedLink.isPending}
@@ -651,8 +723,7 @@ export default function AnalyzerPage() {
             ) : (
               <div className="rounded-xl border border-border bg-card shadow-sm">
                 <div className="border-b border-border px-5 py-5 sm:px-6">
-                  <p className="text-xs font-semibold uppercase tracking-[0.13em] text-muted-foreground">Evidence report</p>
-                  <h2 className="mt-1 text-xl font-semibold tracking-tight">Your findings appear here</h2>
+                  <h2 className="text-xl font-semibold tracking-tight">Your findings appear here</h2>
                 </div>
                 <div className="flex min-h-56 flex-col items-center justify-center px-6 py-10 text-center">
                   <div className="flex size-12 items-center justify-center rounded-xl border border-border bg-muted/50"><ShieldCheck className="size-5 text-muted-foreground" aria-hidden="true" /></div>
@@ -669,7 +740,7 @@ export default function AnalyzerPage() {
           </p>
         )}
         <footer className="mt-10 flex flex-col justify-between gap-2 border-t border-border pt-5 text-xs text-muted-foreground sm:flex-row">
-          <span>Veridict reports evidence, not certainty.</span>
+          <span>Lumio reports evidence, not certainty.</span>
           <span>Reports and email content are not stored. One-way IP/browser counters are retained to enforce scan limits.</span>
         </footer>
       </main>
@@ -680,6 +751,7 @@ export default function AnalyzerPage() {
 function ReportView({
   report,
   onExport,
+  onPrint,
   emailLinks,
   selectedLinkId,
   setSelectedLinkId,
@@ -697,6 +769,7 @@ function ReportView({
 }: {
   report: ScanReport;
   onExport: () => void;
+  onPrint: () => boolean;
   emailLinks: NonNullable<ScanReport['links']>;
   selectedLinkId: string;
   setSelectedLinkId: (id: string) => void;
@@ -712,6 +785,7 @@ function ReportView({
   onExplain: () => void;
   onCancelExplanation: () => void;
 }) {
+  const [printError, setPrintError] = useState('');
   const riskColor = report.riskBand === 'critical' || report.riskBand === 'high'
     ? 'border-destructive/30 bg-destructive/5 text-destructive'
     : report.riskBand === 'moderate'
@@ -721,11 +795,10 @@ function ReportView({
         : 'border-border bg-muted/30 text-muted-foreground';
   const attachments = report.findings.filter((finding) => finding.source === 'attachment_metadata');
   return (
-    <article id="veridict-print-report" className="overflow-hidden rounded-xl border border-border bg-card shadow-sm" data-testid="report-analysis">
+    <article id="lumio-print-report" className="overflow-hidden rounded-xl border border-border bg-card shadow-sm" data-testid="report-analysis">
       <header className="border-b border-border px-5 py-5 sm:px-6">
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.13em] text-muted-foreground">Evidence report</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-semibold tracking-tight">Analysis complete</h2>
               <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${riskColor}`} data-testid="status-risk-band">
@@ -734,13 +807,16 @@ function ReportView({
             </div>
             <p className="mt-2 text-xs text-muted-foreground">Completed {formatDate(report.completedAt)} · Ruleset {report.ruleSetVersion}</p>
           </div>
-          <div className="flex gap-2 print:hidden" data-testid="report-actions">
-            <button type="button" onClick={onExport} data-testid="button-export-html" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-input bg-background px-3 text-sm font-medium hover:bg-muted">
-              <Download className="size-4" aria-hidden="true" /> Export HTML
-            </button>
-            <button type="button" onClick={() => window.print()} data-testid="button-print-pdf" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90">
-              <Printer className="size-4" aria-hidden="true" /> Print / PDF
-            </button>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex gap-2 print:hidden" data-testid="report-actions">
+              <button type="button" onClick={onExport} data-testid="button-export-html" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-input bg-background px-3 text-sm font-medium hover:bg-muted">
+                <Download className="size-4" aria-hidden="true" /> Export HTML
+              </button>
+              <button type="button" onClick={() => setPrintError(onPrint() ? '' : 'The print-ready report did not open. Allow pop-ups for this page, then try again.')} data-testid="button-print-pdf" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90">
+                <Printer className="size-4" aria-hidden="true" /> Print / PDF
+              </button>
+            </div>
+            {printError && <p className="max-w-xs text-right text-xs text-destructive print:hidden" role="status" data-testid="status-print-error">{printError}</p>}
           </div>
         </div>
         <div className={`mt-4 flex items-start gap-2 rounded-lg border p-3 text-sm ${report.coverage.sufficient ? 'border-border bg-muted/30 text-foreground' : 'border-amber-500/30 bg-amber-500/5 text-foreground'}`}
@@ -799,7 +875,7 @@ function ReportView({
               <div className="min-w-0">
                 <h3 id="explanation-title" className="text-sm font-semibold">Optional AI explanation</h3>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground print:hidden">
-                  If you opt in, Veridict sends Vultr a short redacted summary of this report—not the raw email, full URL, or email link list. Vultr’s prompt-retention and model-training terms have not been verified. The explanation may be wrong and never changes the risk band.
+                  If you opt in, Lumio sends Vultr a short redacted summary of this report—not the raw email, full URL, or email link list. Vultr’s prompt-retention and model-training terms have not been verified. The explanation may be wrong and never changes the risk band.
                 </p>
               </div>
             </div>
@@ -815,14 +891,14 @@ function ReportView({
               <button type="button" onClick={onExplain}
                 disabled={!explanationConsent || explanationStatus === 'streaming' || explanationStatus === 'complete' || (explanationStatus === 'error' && !!explanationText)}
                 data-testid="button-request-ai-explanation"
-                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">
                 {explanationStatus === 'streaming' ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : <Sparkles className="size-4" aria-hidden="true" />}
                 {explanationStatus === 'error' && !explanationText ? 'Retry explanation' : explanationStatus === 'complete' ? 'Explanation complete' : 'Explain this report'}
               </button>
               {explanationStatus === 'streaming' && (
                 <button type="button" onClick={onCancelExplanation}
                   data-testid="button-cancel-ai-explanation"
-                  className="inline-flex min-h-10 items-center justify-center rounded-lg border border-input bg-background px-4 text-sm font-medium hover:bg-muted">
+                  className="inline-flex min-h-11 items-center justify-center rounded-lg border border-input bg-background px-4 text-sm font-medium hover:bg-muted">
                   Cancel
                 </button>
               )}
@@ -872,7 +948,7 @@ function ReportView({
               <span>I separately consent to visit and analyze the selected link in an isolated session.</span>
             </label>
             <button type="button" onClick={onScanLink} disabled={!selectedLinkId || !linkConsent || selectedLinkPending || !emailLinks.find((link) => link.linkId === selectedLinkId)?.scanAvailable}
-              data-testid="button-scan-selected-link" className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-lg border border-input bg-background px-4 text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">
+              data-testid="button-scan-selected-link" className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-input bg-background px-4 text-sm font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">
               {selectedLinkPending ? <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> : <Globe2 className="size-4" aria-hidden="true" />}
               Scan selected link
             </button>

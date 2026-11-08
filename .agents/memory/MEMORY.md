@@ -6,3 +6,5 @@
 - [Veridict agent workflow](veridict-agent-workflow.md) — Keep deterministic scans independent from optional, opt-in explanations; only bounded redacted evidence may reach Vultr inference.
 - [Veridict abuse quotas](veridict-abuse-quotas.md) — Lifetime IP caps use HMAC counters plus a signed browser token, not raw IP logs or invasive fingerprinting.
 - [Docker firewall ordering](veridict-docker-firewall.md) — Accept established replies before private-range drops or Docker bridge DNS/HTTP can fail.
+- [ReUI Base component additions](reui-base-stepper.md) — For isolated Base UI additions, restore Radix project defaults and keep Base wrappers scoped.
+- [Lumio loading boundaries](lumio-loading-boundaries.md) — Keep the primary analyzer eager; defer only scan-time and explicitly opt-in modules.
