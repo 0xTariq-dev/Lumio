@@ -1,7 +1,18 @@
 import { useRef, useState, type FormEvent } from 'react';
-import { FileText, Globe2, Plus, Send, X } from 'lucide-react';
+import { ChevronDown, FileText, Globe2, Plus, ShieldCheck, X } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Field } from '@/components/ui/field';
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group';
+import { Kbd } from '@/components/ui/kbd';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { cn } from '@/lib/utils';
 
 export type LumioAttachment =
   | { type: 'url'; value: string }
@@ -11,8 +22,13 @@ type Props = {
   message: string;
   attachment: LumioAttachment | null;
   disabled?: boolean;
+  showHelp?: boolean;
+  reviewOptIn: boolean;
+  summaryEnabled: boolean;
   onMessageChange: (message: string) => void;
   onAttachmentChange: (attachment: LumioAttachment | null) => void;
+  onReviewOptInChange: (value: boolean) => void;
+  onSummaryChange: (value: boolean) => void;
   onSubmit: (message: string, attachment: LumioAttachment) => void;
   onError: (message: string) => void;
 };
@@ -33,8 +49,13 @@ export function CInputGroup18({
   message,
   attachment,
   disabled = false,
+  showHelp = true,
+  reviewOptIn,
+  summaryEnabled,
   onMessageChange,
   onAttachmentChange,
+  onReviewOptInChange,
+  onSummaryChange,
   onSubmit,
   onError,
 }: Props) {
@@ -99,58 +120,101 @@ export function CInputGroup18({
 
   return (
     <>
-      <form onSubmit={submit} className="mx-auto w-full max-w-3xl" data-testid="form-conversation-composer">
-        <label htmlFor="conversation-note" className="sr-only">Optional note or context for this investigation</label>
-        <InputGroup className="min-h-32 flex-col items-stretch rounded-xl bg-background px-1">
-          {attachment && <InputGroupAddon align="block-start" className="justify-start border-b border-border px-3 py-2">
-            <span className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-xs text-foreground" data-testid="chip-investigation-attachment">
-              {attachment.type === 'url' ? <Globe2 className="size-3.5 shrink-0" aria-hidden="true" /> : <FileText className="size-3.5 shrink-0" aria-hidden="true" />}
-              <span className="max-w-[min(60vw,24rem)] truncate">{attachment.type === 'url' ? safeUrlLabel(attachment.value) : attachment.file.name}</span>
-              {attachment.type === 'email' && <span className="shrink-0 text-muted-foreground">{(attachment.file.size / 1024 / 1024).toFixed(2)} MB</span>}
-              <button type="button" aria-label="Remove attachment" onClick={() => onAttachmentChange(null)} disabled={disabled} className="ml-1 inline-flex size-6 items-center justify-center rounded hover:bg-muted disabled:opacity-50" data-testid="button-remove-attachment"><X className="size-3.5" aria-hidden="true" /></button>
-            </span>
-          </InputGroupAddon>}
-          <InputGroupTextarea
-            id="conversation-note"
-            rows={2}
-            maxLength={1200}
-            value={message}
-            disabled={disabled}
-            onChange={(event) => { onMessageChange(event.target.value); onError(''); }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
-              }
-            }}
-            placeholder="Add an optional note or question for Lumio. Avoid private details."
-            aria-describedby="composer-note-help"
-            data-testid="input-conversation-note"
-            className="min-h-16 px-3 py-3"
-          />
-          <InputGroupAddon align="block-end" className="justify-between border-t border-border px-2 py-2">
-            <InputGroupButton
-              type="button"
-              aria-label="Attach one URL or email file"
-              title="Attach one public URL or .eml file"
-              onClick={() => { setAttachDialogOpen(true); setUrlView(false); }}
+      <Field className="mx-auto w-full max-w-3xl">
+        <form onSubmit={submit} className="w-full" data-testid="form-conversation-composer">
+          <label htmlFor="conversation-note" className="sr-only">Optional note or context for this investigation</label>
+          <InputGroup className="min-h-28 flex-col items-stretch rounded-xl bg-background px-1">
+            {attachment && <InputGroupAddon align="block-start" className="justify-start border-b border-border px-3 py-2">
+              <span className="inline-flex max-w-full items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-xs text-foreground" data-testid="chip-investigation-attachment">
+                {attachment.type === 'url' ? <Globe2 className="size-3.5 shrink-0" aria-hidden="true" /> : <FileText className="size-3.5 shrink-0" aria-hidden="true" />}
+                <span className="max-w-[min(60vw,24rem)] truncate">{attachment.type === 'url' ? safeUrlLabel(attachment.value) : attachment.file.name}</span>
+                {attachment.type === 'email' && <span className="shrink-0 text-muted-foreground">{(attachment.file.size / 1024 / 1024).toFixed(2)} MB</span>}
+                <button type="button" aria-label="Remove attachment" onClick={() => onAttachmentChange(null)} disabled={disabled} className="ml-1 inline-flex size-6 items-center justify-center rounded hover:bg-muted disabled:opacity-50" data-testid="button-remove-attachment"><X className="size-3.5" aria-hidden="true" /></button>
+              </span>
+            </InputGroupAddon>}
+            <InputGroupTextarea
+              id="conversation-note"
+              rows={2}
+              maxLength={1200}
+              value={message}
               disabled={disabled}
-              data-testid="button-open-attachments"
-              className="size-10 rounded-lg"
-            ><Plus className="size-4" aria-hidden="true" /></InputGroupButton>
-            <span className="mr-auto ml-2 text-[11px] text-muted-foreground">One URL or .eml attachment · optional note</span>
-            <InputGroupButton
-              type="submit"
-              aria-label="Send for analysis"
-              title="Send for analysis"
-              disabled={disabled || !attachment}
-              data-testid="button-send-analysis"
-              className="size-10 rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
-            ><Send className="size-4" aria-hidden="true" /></InputGroupButton>
-          </InputGroupAddon>
-        </InputGroup>
-        <p id="composer-note-help" className="mt-2 px-1 text-xs leading-5 text-muted-foreground">Optional context stays in this tab and is not sent to the scanner. Maximum 1,200 characters.</p>
-      </form>
+              onChange={(event) => { onMessageChange(event.target.value); onError(''); }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
+              placeholder="Add an optional note or question for Lumio. Avoid private details."
+              aria-describedby="composer-note-help"
+              data-testid="input-conversation-note"
+              className="min-h-16 px-3 py-3"
+            />
+            <InputGroupAddon align="block-end" className="border-t border-border px-2 py-2">
+              <div className="flex flex-wrap items-center gap-1">
+                <InputGroupButton
+                  variant="ghost"
+                  size="icon-xs"
+                  type="button"
+                  aria-label="Attach one URL or email file"
+                  title="Attach one public URL or .eml file"
+                  onClick={() => { setAttachDialogOpen(true); setUrlView(false); }}
+                  disabled={disabled}
+                  data-testid="button-open-attachments"
+                ><Plus className="size-4" aria-hidden="true" /></InputGroupButton>
+                <InputGroupButton
+                  variant="ghost"
+                  size="xs"
+                  type="button"
+                  aria-pressed={reviewOptIn}
+                  aria-label="Ask before follow-up checks"
+                  title="Lumio may propose up to three extra steps before the report. Nothing runs without your approval."
+                  onClick={() => { onReviewOptInChange(!reviewOptIn); onError(''); }}
+                  disabled={disabled}
+                  data-testid="button-agent-review"
+                  className={cn('h-7 px-2 text-xs', reviewOptIn && 'bg-muted text-foreground')}
+                ><ShieldCheck className="size-3.5" aria-hidden="true" />Follow-up checks</InputGroupButton>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <InputGroupButton
+                      variant="ghost"
+                      size="xs"
+                      type="button"
+                      aria-label="AI summary setting"
+                      title="Choose whether Lumio asks Vultr inference for an optional summary"
+                      disabled={disabled}
+                      data-testid="button-summary-mode"
+                      className="h-7 px-2 text-xs"
+                    >
+                      <Kbd className="border-border rounded-sm border">AI</Kbd>
+                      {summaryEnabled ? 'Summary on' : 'No summary'}
+                      <ChevronDown className="ml-1 size-3.5 opacity-60" aria-hidden="true" />
+                    </InputGroupButton>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="min-w-56" data-testid="menu-summary-mode">
+                    <DropdownMenuLabel>Optional AI summary</DropdownMenuLabel>
+                    <DropdownMenuItem onClick={() => onSummaryChange(true)} data-testid="menu-summary-on">Ask Vultr inference</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onSummaryChange(false)} data-testid="menu-summary-off">No AI summary</DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <p className="px-2 py-1.5 text-xs leading-5 text-muted-foreground">Redacted evidence only. AI cannot change the risk band or the report.</p>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              <InputGroupButton
+                variant="ghost"
+                size="icon-sm"
+                type="submit"
+                aria-label="Send for analysis"
+                title="Send for analysis"
+                disabled={disabled || !attachment}
+                data-testid="button-send-analysis"
+                className="ml-auto size-9 shrink-0 overflow-hidden rounded-full border border-search-surface bg-search-surface p-1 hover:bg-search-surface hover:opacity-85 disabled:opacity-60"
+              ><img src="/search-send-100.gif" alt="" className="search-send-icon size-full rounded-full object-cover" aria-hidden="true" /></InputGroupButton>
+            </InputGroupAddon>
+          </InputGroup>
+          <p id="composer-note-help" className={showHelp ? 'mt-2 px-1 text-xs leading-5 text-muted-foreground' : 'sr-only'}>Optional context stays in this tab and is not sent to the scanner. Maximum 1,200 characters. Follow-up checks pause the scan for at most 3 minutes and each step needs your approval.</p>
+        </form>
+      </Field>
       <input ref={fileInputRef} type="file" accept=".eml" className="sr-only" aria-label="Choose one .eml file" data-testid="input-email-file" onChange={(event) => {
         const file = event.currentTarget.files?.[0];
         event.currentTarget.value = '';

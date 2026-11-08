@@ -18,6 +18,7 @@ import {
 import type { AgentActionResult, AgentApprovalRequest, ScanAccepted, ScanCancellation, ScanProgress, ScanReport } from '@workspace/api-client-react';
 import {
   AlertCircle,
+  ArrowRight,
   ArrowUpRight,
   CheckCircle2,
   CircleAlert,
@@ -40,6 +41,8 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { CInputGroup18, type LumioAttachment } from '@/components/examples/c-input-group-18';
+import { AnimatedTagline } from '@/components/animated-tagline';
+import { motion, useReducedMotion } from 'framer-motion';
 
 type ConversationItem = { scanId: string; type: ScanReport['type']; input: string; displayLabel?: string; note: string; report: ScanReport | null; summary?: string; summaryStatus?: 'idle' | 'streaming' | 'complete' | 'error'; summaryError?: string; error?: string };
 type StopNotice = { kind: 'withdrawal' | 'single' | 'batch'; scanIds: string[]; approvalIds: string[]; message: string; pendingAcceptanceCount?: number };
@@ -468,6 +471,38 @@ function ScanProgressLoadingSkeleton() {
 
 export default function AnalyzerPage() {
   const queryClient = useQueryClient();
+  const [shellActive, setShellActive] = useState(false);
+  const [cardActive, setCardActive] = useState(false);
+  const [cardLeaving, setCardLeaving] = useState(false);
+  const reducedMotion = useReducedMotion();
+  const layoutTransition = reducedMotion
+    ? { duration: 0 }
+    : cardLeaving
+      ? { type: 'spring' as const, duration: 1.1, bounce: 0.1 }
+      : { duration: 0.7, ease: [0.22, 1, 0.36, 1] as [number, number, number, number] };
+  const [heroLeaving, setHeroLeaving] = useState(false);
+  const shellRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!heroLeaving) return;
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const transition = window.setTimeout(() => {
+      setCardActive(true);
+      window.scrollTo({ top: 0, behavior: reduced ? 'instant' : 'smooth' });
+    }, reduced ? 0 : 700);
+    return () => window.clearTimeout(transition);
+  }, [heroLeaving]);
+  useEffect(() => {
+    if (!cardLeaving) return;
+    const fullscreen = window.setTimeout(() => {
+      window.scrollTo({ top: 0, behavior: 'instant' });
+      setShellActive(true);
+    }, reducedMotion ? 0 : 220);
+    const focus = window.setTimeout(() => shellRef.current?.querySelector<HTMLElement>('textarea')?.focus({ preventScroll: true }), reducedMotion ? 0 : 1400);
+    return () => { window.clearTimeout(fullscreen); window.clearTimeout(focus); };
+  }, [cardLeaving, reducedMotion]);
+  const activateShell = () => {
+    setHeroLeaving(true);
+  };
   const statusQuery = useGetAnalysisStatus({
     query: { queryKey: getGetAnalysisStatusQueryKey(), refetchInterval: 15000 },
   });
@@ -1460,8 +1495,8 @@ export default function AnalyzerPage() {
   };
 
   return (
-    <div className="min-h-[100dvh] bg-background text-foreground">
-      <header className="border-b border-border bg-card">
+    <div className={`${shellActive ? 'flex h-[100dvh] flex-col overflow-hidden' : 'min-h-[100dvh] overflow-x-clip'} bg-background text-foreground`}>
+      <header className="sticky top-0 z-40 shrink-0 border-b border-border/70 bg-card/75 backdrop-blur-xl backdrop-saturate-150">
         <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
           <a href="/" data-testid="link-lumio-home" className="flex min-h-11 items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Lumio home">
             <span className="flex size-9 shrink-0 items-center justify-center" aria-hidden="true">
@@ -1477,22 +1512,45 @@ export default function AnalyzerPage() {
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-4 pb-10 pt-8 sm:px-6 sm:pt-11">
-        <section className="mb-7 max-w-3xl">
-          <h1 className="text-balance text-3xl font-semibold tracking-tight sm:text-4xl">Bringing threats to light. Investigate first, click later.</h1>
-          <p className="mt-3 text-sm leading-6 text-muted-foreground sm:text-base">Private, consent-based checks run in an isolated worker. Lumio reports observable evidence and coverage limits—not a promise of safety.</p>
-        </section>
+      <motion.main layout transition={{ layout: layoutTransition }} className={shellActive ? 'flex min-h-0 w-full flex-1 flex-col' : 'mx-auto w-full max-w-5xl px-4 pb-10 pt-8 sm:px-6 sm:pt-11'} data-workspace-stage={shellActive ? 'fullscreen' : cardActive ? 'card' : 'hero'}>
+        {!shellActive && <section className={`relative flex flex-col transition-all duration-700 ease-out ${cardActive ? 'mb-7 max-w-3xl items-start gap-3 text-left' : 'mb-10 items-center gap-6 pt-6 text-center sm:gap-8 sm:pt-12'} ${(cardActive ? cardLeaving : heroLeaving) ? 'opacity-0' : 'opacity-100'}`} data-testid="hero">
+          <div className={`hero-collapse grid ${cardActive ? 'hero-collapsed' : ''}`} inert={cardActive ? true : undefined} aria-hidden={cardActive || undefined}>
+            <div className="min-h-0 overflow-hidden">
+              <span className="hero-appear inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium">
+                <span className="text-muted-foreground">Consent-based threat checks</span>
+                <span className="flex items-center gap-1">How it works <ArrowRight className="size-3" aria-hidden="true" /></span>
+              </span>
+            </div>
+          </div>
+          <h1 className={`relative z-10 text-balance font-semibold leading-tight transition-all duration-700 ease-out ${cardActive ? 'max-w-3xl text-3xl text-foreground sm:text-4xl' : 'mb-4 w-full max-w-4xl pb-3 text-4xl text-foreground sm:mb-6 sm:pb-4 sm:text-6xl sm:leading-tight'}`}><AnimatedTagline key={cardActive ? 'heading-reveal' : 'heading-decrypt'} text={cardActive ? 'Lumio runs private, consent-based checks.' : 'Bringing threats to light. Investigate first, click later.'} reveal={cardActive} leaving={heroLeaving} /></h1>
+          {cardActive && <p className="relative z-10 max-w-3xl text-sm font-medium leading-6 text-muted-foreground sm:text-base"><AnimatedTagline text="Suspicious URLs and email are investigated in an isolated worker. Reports show observable evidence and coverage limits—not a promise of safety." reveal leaving={false} decrypt={false} /></p>}
+          <div className={`hero-collapse grid ${cardActive ? 'hero-collapsed' : ''}`} inert={cardActive ? true : undefined} aria-hidden={cardActive || undefined}>
+            <div className="min-h-0 overflow-hidden">
+              <div className="hero-appear hero-delay-300 relative z-10 flex flex-wrap justify-center gap-3">
+                <button type="button" onClick={activateShell} data-testid="button-get-started" className="inline-flex min-h-11 items-center gap-2 rounded-md bg-primary px-6 text-sm font-medium text-primary-foreground shadow-sm hover:bg-primary/90">Get started <ArrowRight className="size-4" aria-hidden="true" /></button>
+                <a href="https://github.com/0xTariq-dev/Lumio" target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border bg-card px-6 text-sm font-medium hover:bg-muted">View source</a>
+              </div>
+            </div>
+          </div>
+        </section>}
         {stopNotice && <aside role="alert" aria-live="assertive" className="mb-5 flex flex-col gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 sm:flex-row sm:items-center sm:justify-between" data-testid="status-stop-unconfirmed">
           <div><p className="text-sm font-semibold">{stopNotice.message}</p>{(stopNotice.pendingAcceptanceCount ?? 0) > 0 && <p className="mt-1 text-xs leading-5 text-muted-foreground">Waiting for {stopNotice.pendingAcceptanceCount} in-flight submission{stopNotice.pendingAcceptanceCount === 1 ? '' : 's'} to return an acceptance before a stop request can be sent.</p>}</div>
           {(stopNotice.scanIds.length > 0 || stopNotice.approvalIds.length > 0) && <button type="button" onClick={() => void retryStopNotice()} disabled={cancelScan.isPending || cancelAgentApprovals.isPending} className="min-h-11 shrink-0 rounded-md border border-destructive/30 bg-background px-4 text-sm font-medium hover:bg-destructive/5 disabled:opacity-50" data-testid="button-retry-stop">Retry stop request</button>}
         </aside>}
-        <section className="mx-auto max-w-4xl overflow-hidden rounded-2xl border border-border bg-card shadow-sm" aria-label="Investigation conversation">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3.5 sm:px-6">
+        <motion.div layout transition={{ layout: layoutTransition }} className={shellActive ? 'relative flex min-h-0 flex-1 flex-col' : cardActive ? 'relative' : 'relative hero-appear hero-delay-700'}>
+        <div aria-hidden="true" className={`hero-glow-top pointer-events-none absolute inset-x-0 top-0 transition-opacity duration-700 ease-out ${heroLeaving ? 'opacity-0' : 'opacity-100'}`}>
+          <div className="hero-glow-outer" />
+          <div className="hero-glow-inner" />
+        </div>
+        <motion.div layout transition={{ layout: layoutTransition }} className={shellActive ? 'relative z-10 flex min-h-0 w-full flex-1 flex-col' : `relative z-10 mx-auto w-full max-w-4xl rounded-2xl ${cardActive ? 'p-0' : 'bg-accent/5 p-2'}`}>
+        <motion.section layout transition={{ layout: layoutTransition }} id="workspace" ref={shellRef} inert={!cardActive ? true : undefined}
+          className={shellActive ? 'shell-stage flex min-h-0 flex-1 flex-col overflow-hidden bg-background' : `shell-stage overflow-hidden rounded-2xl border border-border bg-card shadow-sm ${cardActive ? 'shell-active' : heroLeaving ? '' : 'shell-preview'}`} aria-label="Investigation conversation">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3.5 sm:px-6">
             <div><h2 className="text-base font-semibold tracking-tight">Investigation workspace</h2><p className="mt-0.5 text-xs text-muted-foreground">One temporary conversation. Nothing here is saved after this tab closes.</p></div>
             {sessionConsent && <button type="button" onClick={withdrawConsent} data-testid="button-withdraw-consent" className="min-h-10 rounded-md px-3 text-xs font-medium text-muted-foreground underline-offset-4 hover:bg-muted hover:text-foreground hover:underline">Withdraw consent and clear</button>}
           </div>
           {(scanAccepted || batchPlanVisible) && (
-            <div className="sticky top-0 z-10 border-b border-border bg-card/95 px-4 py-4 backdrop-blur-sm sm:px-6" data-testid="pinned-scan-stepper">
+            <div className="sticky top-0 z-10 shrink-0 border-b border-border bg-card/95 px-4 py-4 backdrop-blur-sm sm:px-6" data-testid="pinned-scan-stepper">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div><p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Analysis plan</p><p className="mt-1 text-sm font-medium">{batchPlanVisible ? currentProgressMessage : activeReport ? 'Analysis complete' : cancelled ? 'Analysis cancelled' : progressMessage}</p></div>
                 {batchPlanVisible && activeBatchScans.length > 0
@@ -1505,7 +1563,7 @@ export default function AnalyzerPage() {
               {streamError && <p className="mt-2 text-xs text-muted-foreground" role="status" data-testid="status-stream-recovery">{streamError}</p>}
             </div>
           )}
-       <div className="flex min-h-[min(70vh,680px)] max-h-[min(75vh,760px)] flex-col">
+       <div className={shellActive ? 'flex min-h-0 flex-1 flex-col' : 'flex min-h-[min(70vh,680px)] max-h-[min(75vh,760px)] flex-col'}>
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6" aria-live="polite" aria-relevant="additions text" data-testid="conversation-thread">
               {!hasConversation && !activeReport && (
                 <div className="mx-auto flex min-h-72 max-w-xl flex-col items-center justify-center py-12 text-center">
@@ -1556,28 +1614,33 @@ export default function AnalyzerPage() {
               {statusQuery.isError && <div role="alert" className="mb-3 flex justify-between gap-3 text-sm text-destructive" data-testid="error-readiness"><span>Analyzer readiness could not be confirmed.</span><button type="button" onClick={() => void statusQuery.refetch()} data-testid="button-retry-readiness" className="min-h-10 underline">Retry</button></div>}
               {!!Object.keys(batchStates).length && <section className="mt-5 rounded-xl border border-border bg-muted/20 p-4" aria-label="Selected link scan batch" data-testid="selected-link-batch"><div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold">Selected link scans</h3>{Object.values(batchStates).some((item) => ['submitting', 'accepted', 'queued', 'running'].includes(item.status)) && <button type="button" onClick={() => void cancelRemainingBatch()} disabled={cancelScan.isPending} className="min-h-10 rounded-md border border-input px-3 text-xs font-medium hover:bg-muted disabled:opacity-50" data-testid="button-cancel-link-batch">Stop remaining scans</button>}</div><ul className="mt-3 space-y-2">{Object.entries(batchStates).map(([id, item]) => <li key={id} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm" data-testid={`batch-link-${id}`}><span className="min-w-0 flex-1 break-all">{batchLabels[id] || 'Selected link'}<span className="ml-2 text-xs text-muted-foreground">{item.reason ?? (item.status === 'running' ? 'Worker is analyzing this link.' : '')}</span></span><span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-xs capitalize">{item.status}</span></li>)}</ul></section>}
             </div>
-            <div className="border-t border-border bg-card p-3 sm:p-4">
-              <label className="mx-auto mb-2 flex max-w-3xl cursor-pointer items-start gap-2 px-1 text-xs leading-5 text-muted-foreground" data-testid="label-agent-review-opt-in">
-                <input type="checkbox" checked={agentReviewOptIn} disabled={busy} onChange={(event) => setAgentReviewOptIn(event.target.checked)}
-                  data-testid="checkbox-agent-review" className="mt-0.5 size-4 shrink-0 accent-foreground" />
-                <span><strong className="font-medium text-foreground">Ask me before follow-up checks.</strong> Before the report is ready, Lumio may propose up to three extra steps, such as visiting one email link. Nothing runs without your approval, and the pause lasts at most 3 minutes.</span>
-              </label>
+            <motion.div layout="position" transition={{ layout: layoutTransition }} className="shrink-0 border-t border-border bg-card p-3 sm:p-4" data-testid="pinned-agent-input"
+              onClickCapture={(event) => {
+                if (cardActive && !shellActive && !cardLeaving && event.target instanceof Element && event.target.closest('textarea')) setCardLeaving(true);
+              }}>
               <CInputGroup18
                 message={chatNote}
+                showHelp={!cardLeaving}
                 attachment={attachment}
                 disabled={busy || workerUnavailable || statusQuery.isLoading || statusQuery.isError}
                 onMessageChange={(value) => { setChatNote(value); setFormError(''); }}
                 onAttachmentChange={(value) => { setAttachment(value); setFormError(''); }}
-                onSubmit={(message, selectedAttachment) => requestSubmit(message, selectedAttachment)}
+                reviewOptIn={agentReviewOptIn}
+                summaryEnabled={summaryConsent}
+                onReviewOptInChange={setAgentReviewOptIn}
+                onSummaryChange={setSummaryConsent}
+                 onSubmit={(message, selectedAttachment) => requestSubmit(message, selectedAttachment)}
                 onError={setFormError}
               />
-              {status?.scanQuota.enabled && <p className="mx-auto mt-2 max-w-3xl px-1 text-[11px] text-muted-foreground" data-testid="status-scan-quota">Usage · Today {status.scanQuota.daily.used ?? '—'}/{status.scanQuota.daily.total} · Lifetime {status.scanQuota.lifetime.used ?? '—'}/{status.scanQuota.lifetime.total}</p>}
+              {status?.scanQuota?.enabled && <p className="mx-auto mt-2 max-w-3xl px-1 text-[11px] text-muted-foreground" data-testid="status-scan-quota">Usage · Today {status.scanQuota.daily.used ?? '—'}/{status.scanQuota.daily.total} · Lifetime {status.scanQuota.lifetime.used ?? '—'}/{status.scanQuota.lifetime.total}</p>}
               {status?.queue && <p className="mx-auto mt-1 max-w-3xl px-1 text-[11px] text-muted-foreground" data-testid="text-queue-status">Queue · {status.queue.active} active of {status.queue.activeLimit} · {status.queue.queued} waiting of {status.queue.queuedLimit}</p>}
-            </div>
+            </motion.div>
           </div>
-        </section>
-        <footer className="mx-auto mt-6 flex max-w-4xl flex-col justify-between gap-2 border-t border-border pt-4 text-xs text-muted-foreground sm:flex-row"><span>Lumio reports evidence, not certainty.</span><span>Reports and email content are not stored. One-way IP/browser counters enforce scan limits.</span></footer>
-      </main>
+        </motion.section>
+        </motion.div>
+        </motion.div>
+        <motion.footer layout="position" transition={{ layout: layoutTransition }} className={shellActive ? 'flex shrink-0 flex-col justify-between gap-2 border-t border-border bg-card px-4 py-3 text-xs text-muted-foreground sm:flex-row sm:px-6' : 'mx-auto mt-6 flex max-w-4xl flex-col justify-between gap-2 border-t border-border pt-4 text-xs text-muted-foreground sm:flex-row'} data-testid="workspace-footer"><span>Lumio reports evidence, not certainty.</span><span>Reports and email content are not stored. One-way IP/browser counters enforce scan limits.</span></motion.footer>
+      </motion.main>
       <Dialog open={consentDialogOpen} onOpenChange={(open) => { setConsentDialogOpen(open); if (!open) submissionRef.current = null; }}>
         <DialogContent aria-describedby="session-consent-copy" data-testid="dialog-first-scan-consent">
           <DialogHeader><DialogTitle>Before Lumio checks this</DialogTitle><DialogDescription id="session-consent-copy">Your submission is sent to an isolated worker for a temporary analysis. Lumio returns deterministic evidence and coverage limits; it cannot guarantee that a URL or message is safe.</DialogDescription></DialogHeader>
