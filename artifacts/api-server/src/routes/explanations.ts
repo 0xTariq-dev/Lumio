@@ -33,31 +33,6 @@ const explanationRateLimiter = process.env.SESSION_SECRET
       60_000,
     )
   : undefined;
-const expressExplanationRateLimiter = expressRateLimit({
-  windowMs: 60_000,
-  limit: EXPLANATION_REQUESTS_PER_IP_PER_MINUTE,
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  keyGenerator: (req) => {
-    const ip = req.ip ?? "";
-    const normalizedIp = ip ? ipKeyGenerator(ip, 56) : "missing-ip";
-    const secret = process.env.SESSION_SECRET ?? "unconfigured";
-    return createHmac("sha256", secret)
-      .update("veridict:express-explanation-limit:v1\0")
-      .update(normalizedIp)
-      .digest("hex");
-  },
-  handler: (_req, res) => {
-    sendError(
-      res,
-      429,
-      "EXPLANATION_RATE_LIMITED",
-      "Too many explanation requests. Try again later; your report is unchanged.",
-      true,
-    );
-  },
-});
-
 let activeExplanations = 0;
 const inFlightTokens = new Set<string>();
 const consumedTokens = new Map<string, number>();
@@ -83,6 +58,11 @@ function validateExplanationRequest(
   res: Response,
   next: NextFunction,
 ): void {
+  if (req.method !== "POST") {
+    next("router");
+    return;
+  }
+
   const params = StreamScanExplanationParams.safeParse(req.params);
   const body = StreamScanExplanationBody.safeParse(req.body);
   if (!params.success || !body.success) {
@@ -189,11 +169,38 @@ function pruneConsumedTokens(now: number): void {
   }
 }
 
-router.post(
+router.use(
   "/scans/:scanId/explanation/stream",
   validateExplanationRequest,
   enforceBoundedExplanationRateLimit,
-  expressExplanationRateLimiter,
+  expressRateLimit({
+    windowMs: 60_000,
+    limit: EXPLANATION_REQUESTS_PER_IP_PER_MINUTE,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+      const ip = req.ip ?? "";
+      const normalizedIp = ip ? ipKeyGenerator(ip, 56) : "missing-ip";
+      const secret = process.env.SESSION_SECRET ?? "unconfigured";
+      return createHmac("sha256", secret)
+        .update("veridict:express-explanation-limit:v1\0")
+        .update(normalizedIp)
+        .digest("hex");
+    },
+    handler: (_req, res) => {
+      sendError(
+        res,
+        429,
+        "EXPLANATION_RATE_LIMITED",
+        "Too many explanation requests. Try again later; your report is unchanged.",
+        true,
+      );
+    },
+  }),
+);
+
+router.post(
+  "/scans/:scanId/explanation/stream",
   async (req, res): Promise<void> => {
     const { claims, config, tokenId } = res.locals
       .authorizedExplanation as AuthorizedExplanation;
