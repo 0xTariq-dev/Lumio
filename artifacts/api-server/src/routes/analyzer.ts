@@ -22,6 +22,10 @@ import {
   type WorkerHealth,
   type WorkerScanPayload,
 } from "../lib/analysis-worker";
+import {
+  isTerminalAnalysisEvent,
+  toPublicWorkerFailureEvent,
+} from "../lib/analysis-event-safety";
 import { normalizeScanTargetInput } from "../lib/normalize-target";
 import {
   areScanQuotaLimitsEnabled,
@@ -726,14 +730,7 @@ function parseEventBlock(
     };
   }
   if (eventName === "failed") {
-    return {
-      event: "failed",
-      data: {
-        code: "ANALYSIS_FAILED",
-        message: "This analysis could not be completed. No report is available.",
-        retryable: true,
-      },
-    };
+    return toPublicWorkerFailureEvent(data);
   }
   return undefined;
 }
@@ -852,7 +849,7 @@ router.get("/scans/:scanId/events", async (req, res) => {
         const event = parseEventBlock(block, params.data.scanId, browserToken);
         if (event) {
           res.write(`event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`);
-          if (event.event === "completed" || event.event === "failed") {
+          if (isTerminalAnalysisEvent(event.event)) {
             done = true;
             controller.abort();
             break;
