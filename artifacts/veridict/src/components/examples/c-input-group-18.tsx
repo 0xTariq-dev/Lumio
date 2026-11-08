@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent } from 'react';
-import { ArrowUp, ChevronDown, FileText, Globe2, Plus, ShieldCheck, X } from 'lucide-react';
+import { ChevronDown, FileText, Globe2, Plus, ShieldCheck, X } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -22,6 +22,7 @@ type Props = {
   message: string;
   attachment: LumioAttachment | null;
   disabled?: boolean;
+  showHelp?: boolean;
   reviewOptIn: boolean;
   summaryEnabled: boolean;
   onMessageChange: (message: string) => void;
@@ -48,6 +49,7 @@ export function CInputGroup18({
   message,
   attachment,
   disabled = false,
+  showHelp = true,
   reviewOptIn,
   summaryEnabled,
   onMessageChange,
@@ -199,18 +201,18 @@ export function CInputGroup18({
                 </DropdownMenu>
               </div>
               <InputGroupButton
-                variant="default"
-                size="icon-xs"
+                variant="ghost"
+                size="icon-sm"
                 type="submit"
                 aria-label="Send for analysis"
                 title="Send for analysis"
                 disabled={disabled || !attachment}
                 data-testid="button-send-analysis"
-                className="ml-auto bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
-              ><ArrowUp className="size-4" aria-hidden="true" /></InputGroupButton>
+                className="ml-auto size-9 shrink-0 overflow-hidden rounded-full border border-search-surface bg-search-surface p-1 hover:bg-search-surface hover:opacity-85 disabled:opacity-60"
+              ><img src="/search-send-100.gif" alt="" className="search-send-icon size-full rounded-full object-cover" aria-hidden="true" /></InputGroupButton>
             </InputGroupAddon>
           </InputGroup>
-          <p id="composer-note-help" className="mt-2 px-1 text-xs leading-5 text-muted-foreground">Optional context stays in this tab and is not sent to the scanner. Maximum 1,200 characters. Follow-up checks pause the scan for at most 3 minutes and each step needs your approval.</p>
+          <p id="composer-note-help" className={showHelp ? 'mt-2 px-1 text-xs leading-5 text-muted-foreground' : 'sr-only'}>Optional context stays in this tab and is not sent to the scanner. Maximum 1,200 characters. Follow-up checks pause the scan for at most 3 minutes and each step needs your approval.</p>
         </form>
       </Field>
       <input ref={fileInputRef} type="file" accept=".eml" className="sr-only" aria-label="Choose one .eml file" data-testid="input-email-file" onChange={(event) => {
