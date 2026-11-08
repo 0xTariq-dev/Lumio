@@ -5,3 +5,4 @@
 - [Veridict local-only intelligence](veridict-local-only-intelligence.md) — Keep submitted URLs and emails out of third-party OSINT lookups in the MVP; retain provider research for later evaluation.
 - [Veridict agent workflow](veridict-agent-workflow.md) — Keep deterministic scans independent from optional, opt-in explanations; only bounded redacted evidence may reach Vultr inference.
 - [Veridict abuse quotas](veridict-abuse-quotas.md) — Lifetime IP caps use HMAC counters plus a signed browser token, not raw IP logs or invasive fingerprinting.
+- [Docker firewall ordering](veridict-docker-firewall.md) — Accept established replies before private-range drops or Docker bridge DNS/HTTP can fail.
