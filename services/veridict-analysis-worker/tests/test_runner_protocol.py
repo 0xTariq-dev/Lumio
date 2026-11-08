@@ -1,9 +1,11 @@
 import json
 import unittest
+from base64 import b64encode
 from unittest.mock import AsyncMock, patch
 
-from microsandbox.types import ExecEventType, PullPolicy
+from microsandbox.types import Action, ExecEventType, PullPolicy
 
+from worker.contracts import EmailScanRequest, URLScanRequest
 from worker.microsandbox_runner import MicrosandboxRunner
 from worker.settings import WorkerSettings
 
@@ -111,7 +113,12 @@ class RunnerProtocolTests(unittest.IsolatedAsyncioTestCase):
         with patch("worker.microsandbox_runner.Sandbox.create", create):
             report = await runner.analyze(
                 SCAN_ID,
-                "https://example.com/path?private=value",
+                URLScanRequest(
+                    scanId=SCAN_ID,
+                    type="url",
+                    url="https://example.com/path?private=value",
+                    consent=True,
+                ),
                 ["http", "static", "browser", "report"],
                 progress,
             )
@@ -149,6 +156,88 @@ class RunnerProtocolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             options["labels"]["app"], "veridict-analysis-worker"
         )
+
+    async def test_email_runs_in_a_fresh_no_network_guest(self):
+        report = {
+            "scanId": SCAN_ID,
+            "type": "email",
+            "riskBand": "inconclusive",
+            "completedAt": "2026-11-08T10:00:00+00:00",
+            "ruleSetVersion": "test-email-rules",
+            "findings": [],
+            "coverage": {
+                "sufficient": False,
+                "checks": [
+                    {"name": "email_headers", "status": "completed"},
+                    {"name": "email_body", "status": "completed"},
+                    {"name": "email_links", "status": "completed"},
+                    {"name": "attachment_metadata", "status": "completed"},
+                    {"name": "selected_link_scan", "status": "skipped"},
+                ],
+            },
+            "links": [],
+        }
+        output = (
+            json.dumps({"kind": "progress", "stage": "analyzing_email"}).encode()
+            + b"\n"
+            + json.dumps({"kind": "progress", "stage": "building_report"}).encode()
+            + b"\n"
+            + json.dumps({"kind": "report", "report": report}).encode()
+            + b"\n"
+        )
+        sandbox = FakeSandbox(
+            FakeExecHandle(
+                [
+                    type(
+                        "Event",
+                        (),
+                        {"event_type": ExecEventType.STDOUT, "data": output},
+                    )(),
+                    type(
+                        "Event",
+                        (),
+                        {"event_type": ExecEventType.EXITED, "data": None, "code": 0},
+                    )(),
+                ]
+            )
+        )
+        create = AsyncMock(return_value=sandbox)
+        settings = WorkerSettings(
+            token="x" * 40,
+            guest_image=IMAGE,
+            guest_image_local="veridict-analysis-guest:2026-11-08",
+        )
+        runner = MicrosandboxRunner(settings)
+        runner._verify_local_image = AsyncMock()
+        request = EmailScanRequest(
+            scanId=SCAN_ID,
+            type="email",
+            emailBase64=b64encode(b"From: sender@example.com\r\n\r\nbody").decode(),
+            consent=True,
+        )
+
+        async def progress(_stage, _reason_code=None):
+            return None
+
+        with patch("worker.microsandbox_runner.Sandbox.create", create):
+            actual = await runner.analyze(
+                SCAN_ID,
+                request,
+                ["email_headers", "email_body", "email_links", "report"],
+                progress,
+            )
+
+        self.assertEqual(actual, report)
+        _command, args, _kwargs = sandbox.command
+        job = json.loads(_kwargs["stdin"])
+        self.assertEqual(args, ["/opt/veridict/guest/scan_email.py"])
+        self.assertEqual(job["type"], "email")
+        self.assertEqual(job["emailBase64"], request.emailBase64)
+        self.assertNotIn("url", job)
+        network = create.await_args.kwargs["network"]
+        self.assertEqual(network.policy.default_egress, Action.DENY)
+        self.assertEqual(network.policy.default_ingress, Action.DENY)
+        self.assertEqual(network.policy.rules, ())
 
     async def test_local_image_verification_rejects_digest_mismatch(self):
         settings = WorkerSettings(

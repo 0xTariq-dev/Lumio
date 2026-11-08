@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from shared.url_policy import URLPolicyError, normalize_public_http_url
 
-from .contracts import URLScanRequest
+from .contracts import EmailLinkScanRequest, EmailScanRequest, URLScanRequest
 from .logging_config import configure_logging
 from .manager import ScanManager
 from .microsandbox_runner import MicrosandboxRunner
@@ -189,20 +189,33 @@ def create_app(
             return _error(400, "INVALID_REQUEST", "The request is invalid.")
         if not isinstance(payload, dict):
             return _error(400, "INVALID_REQUEST", "The request is invalid.")
-        if payload.get("type") != "url":
+        scan_type = payload.get("type")
+        if scan_type not in {"url", "email", "email_link"}:
             return _error(
                 422,
                 "UNSUPPORTED_SCAN_TYPE",
-                "This worker currently accepts URL scans only.",
+                "This scan type is not supported.",
             )
 
         try:
-            scan_request = URLScanRequest.model_validate(payload)
-            normalized_url = normalize_public_http_url(scan_request.url)
-        except (ValidationError, URLPolicyError):
+            if scan_type == "url":
+                scan_request = URLScanRequest.model_validate(payload)
+                scan_request = scan_request.model_copy(
+                    update={"url": normalize_public_http_url(scan_request.url)}
+                )
+            elif scan_type == "email":
+                scan_request = EmailScanRequest.model_validate(payload)
+            else:
+                scan_request = EmailLinkScanRequest.model_validate(payload)
+        except ValidationError:
+            return _error(
+                400,
+                "INVALID_SCAN_REQUEST",
+                "The scan request is invalid.",
+            )
+        except URLPolicyError:
             return _error(400, "INVALID_URL", "The URL is not eligible for analysis.")
 
-        scan_request = scan_request.model_copy(update={"url": normalized_url})
         status, rejection = await manager.enqueue(scan_request)
         if rejection == "full":
             return JSONResponse(
@@ -217,6 +230,12 @@ def create_app(
                 },
             )
         if status is None:
+            if rejection == "link_unavailable":
+                return _error(
+                    404,
+                    "EMAIL_LINK_NOT_AVAILABLE",
+                    "This email link is no longer available for scanning.",
+                )
             return _error(
                 503,
                 "WORKER_UNAVAILABLE",

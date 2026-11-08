@@ -22,6 +22,7 @@ RUN useradd --system --uid 10001 --create-home --home-dir /home/veridict veridic
 
 COPY --chown=veridict:veridict shared/ /opt/veridict/shared/
 COPY --chown=veridict:veridict guest/scan_url.py /opt/veridict/guest/scan_url.py
+COPY --chown=veridict:veridict guest/scan_email.py /opt/veridict/guest/scan_email.py
 COPY --chown=veridict:veridict LICENSE /opt/veridict/LICENSE
 COPY --chown=veridict:veridict THIRD_PARTY_NOTICES.md /opt/veridict/THIRD_PARTY_NOTICES.md
 

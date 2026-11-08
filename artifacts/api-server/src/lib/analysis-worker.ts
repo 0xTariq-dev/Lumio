@@ -144,6 +144,7 @@ export async function postWorkerScan(
   const config = loadWorkerConfig();
   if (!config) return { kind: "unavailable" };
 
+  const requestTimeoutMs = input.type === "email" ? 20_000 : 7_500;
   try {
     const response = await fetch(
       endpointUrl(config.baseUrl, "/v1/scans"),
@@ -154,7 +155,7 @@ export async function postWorkerScan(
           "content-type": "application/json",
         },
         body: JSON.stringify(input),
-        signal: AbortSignal.timeout(7_500),
+        signal: AbortSignal.timeout(requestTimeoutMs),
       },
     );
     if (response.status === 429) return { kind: "rejected", status: 429 };

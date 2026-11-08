@@ -22,7 +22,8 @@ from microsandbox.types import (
     SecurityProfile,
 )
 
-from .manager import ProgressCallback, URL_PLAN_ACTIONS
+from .contracts import AnalysisRequest, EmailScanRequest
+from .manager import EMAIL_PLAN_ACTIONS, ProgressCallback, URL_PLAN_ACTIONS
 from .settings import WorkerSettings
 
 
@@ -37,6 +38,7 @@ _ALLOWED_GUEST_STAGES = {
     "browser_skipped",
     "browser_blocked",
     "browser_failed",
+    "analyzing_email",
     "building_report",
 }
 _ALLOWED_REASON_CODES = {
@@ -66,6 +68,20 @@ def public_web_network() -> Network:
         policy=policy,
         max_tcp_connections=48,
         max_udp_connections=16,
+        strict=True,
+    )
+
+
+def no_network() -> Network:
+    policy = NetworkPolicy(
+        default_egress=Action.DENY,
+        default_ingress=Action.DENY,
+        rules=(),
+    )
+    return Network(
+        policy=policy,
+        max_tcp_connections=1,
+        max_udp_connections=1,
         strict=True,
     )
 
@@ -162,7 +178,7 @@ class MicrosandboxRunner:
     async def analyze(
         self,
         scan_id: str,
-        url: str,
+        request: AnalysisRequest,
         task_plan: list[str],
         progress: ProgressCallback,
     ) -> dict[str, Any]:
@@ -171,16 +187,25 @@ class MicrosandboxRunner:
             raise RuntimeError("Guest image is not configured")
         if self.settings.guest_image_local:
             await self._verify_local_image()
-        if tuple(task_plan) != URL_PLAN_ACTIONS:
-            raise ValueError("Unsupported URL task plan")
+        is_email = isinstance(request, EmailScanRequest)
+        expected_plan = EMAIL_PLAN_ACTIONS if is_email else URL_PLAN_ACTIONS
+        if tuple(task_plan) != expected_plan:
+            raise ValueError("Unsupported analysis task plan")
 
+        job_data: dict[str, Any] = {
+            "scanId": scan_id,
+            "type": "email" if is_email else "url",
+            "taskPlan": task_plan,
+        }
+        script_path = "/opt/veridict/guest/scan_url.py"
+        if is_email:
+            job_data["emailBase64"] = request.emailBase64
+            script_path = "/opt/veridict/guest/scan_email.py"
+        else:
+            job_data["url"] = request.url
+            job_data["browserTimeoutSeconds"] = self.settings.browser_timeout_seconds
         job = json.dumps(
-            {
-                "scanId": scan_id,
-                "url": url,
-                "taskPlan": task_plan,
-                "browserTimeoutSeconds": self.settings.browser_timeout_seconds,
-            },
+            job_data,
             separators=(",", ":"),
         ).encode("utf-8")
         report: dict[str, Any] | None = None
@@ -224,13 +249,13 @@ class MicrosandboxRunner:
                 user="veridict",
                 ephemeral=True,
                 labels={"app": "veridict-analysis-worker", "scan": scan_id},
-                network=public_web_network(),
+                network=no_network() if is_email else public_web_network(),
                 pull_policy=PullPolicy.NEVER,
                 replace=True,
             ) as sandbox:
                 handle = await sandbox.exec_stream(
                     "/usr/local/bin/python",
-                    ["/opt/veridict/guest/scan_url.py"],
+                    [script_path],
                     user="veridict",
                     stdin=job,
                     timeout=self.settings.sandbox_kill_seconds,

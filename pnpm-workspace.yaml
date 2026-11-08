@@ -92,7 +92,10 @@ overrides:
   esbuild>@esbuild/win32-arm64: '-'
   esbuild>@esbuild/win32-ia32: '-'
   esbuild>@esbuild/win32-x64: '-'
-  fast-uri@^3: ^3.1.8
+  fast-uri@^3: 3.1.9
+  postcss-selector-parser: 6.1.5
+  undici: 7.30.1
+  zod: 4.6.7
   js-yaml: 4.3.2
   lightningcss>lightningcss-android-arm64: '-'
   lightningcss>lightningcss-darwin-arm64: '-'

@@ -1,10 +1,12 @@
 import asyncio
+import base64
 import json
 import unittest
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from worker.app import create_app
+from worker.contracts import EmailScanRequest, URLScanRequest
 from worker.settings import WorkerSettings
 
 
@@ -17,14 +19,52 @@ class FakeAnalyzer:
         self.block = block
         self.started = asyncio.Event()
         self.release = asyncio.Event()
+        self.email_link_id = uuid4()
+        self.seen_urls = []
 
     async def prepare(self):
         return None
 
-    async def analyze(self, scan_id, _url, _task_plan, progress):
+    async def analyze(self, scan_id, request, _task_plan, progress):
         self.started.set()
         if self.block:
             await self.release.wait()
+        if isinstance(request, EmailScanRequest):
+            await progress("analyzing_email")
+            await progress("building_report")
+            return {
+                "scanId": scan_id,
+                "type": "email",
+                "riskBand": "inconclusive",
+                "completedAt": datetime.now(timezone.utc).isoformat(),
+                "ruleSetVersion": "test-email-rules",
+                "findings": [],
+                "coverage": {
+                    "sufficient": False,
+                    "checks": [
+                        {"name": "email_headers", "status": "completed"},
+                        {"name": "email_body", "status": "completed"},
+                        {"name": "email_links", "status": "completed"},
+                        {"name": "attachment_metadata", "status": "completed"},
+                        {"name": "selected_link_scan", "status": "skipped"},
+                    ],
+                },
+                "links": [
+                    {
+                        "linkId": str(self.email_link_id),
+                        "anchorText": "Email link 1",
+                        "displayUrl": "https://example.com/",
+                        "targetHost": "example.com",
+                        "scanAvailable": True,
+                    }
+                ],
+                "_privateLinks": {
+                    str(self.email_link_id): "https://example.com/path?private=do-not-return"
+                },
+            }
+
+        if isinstance(request, URLScanRequest):
+            self.seen_urls.append(request.url)
         await progress("navigating")
         await progress("collecting_evidence")
         await progress("browser_skipped", "no_browser_required")
@@ -116,6 +156,26 @@ def scan_payload(scan_id=None, scan_type="url", url="https://example.com/"):
     }
 
 
+def email_payload(scan_id=None):
+    content = b"From: sender@example.com\r\nSubject: private subject\r\n\r\nprivate body"
+    return {
+        "scanId": str(scan_id or uuid4()),
+        "type": "email",
+        "emailBase64": base64.b64encode(content).decode("ascii"),
+        "consent": True,
+    }
+
+
+def completed_report(event_body):
+    current_event = None
+    for line in event_body.decode().splitlines():
+        if line.startswith("event: "):
+            current_event = line[7:]
+        elif line.startswith("data: ") and current_event == "completed":
+            return json.loads(line[6:])
+    raise AssertionError("Completed report event was not present")
+
+
 class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.settings = WorkerSettings(token=TOKEN, guest_image=IMAGE)
@@ -131,19 +191,46 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("x-request-id", headers)
             self.assertEqual(json.loads(body)["error"]["code"], "UNAUTHORIZED")
 
-    async def test_rejects_unsupported_types_and_private_urls(self):
+    async def test_accepts_email_and_rejects_unsupported_or_private_targets(self):
         async with self.app.router.lifespan_context(self.app):
             status, _, body = await asgi_request(
                 self.app,
                 "POST",
                 "/v1/scans",
                 headers=request_headers(),
-                body=json.dumps(scan_payload(scan_type="email")).encode(),
+                body=json.dumps(scan_payload(scan_type="qr")).encode(),
             )
             self.assertEqual(status, 422)
             self.assertEqual(
                 json.loads(body)["error"]["code"], "UNSUPPORTED_SCAN_TYPE"
             )
+
+            email_id = uuid4()
+            status, _, body = await asgi_request(
+                self.app,
+                "POST",
+                "/v1/scans",
+                headers=request_headers(),
+                body=json.dumps(email_payload(email_id)).encode(),
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["accepted"], True)
+            await self.analyzer.started.wait()
+            _, _, event_body = await asgi_request(
+                self.app,
+                "GET",
+                f"/v1/scans/{email_id}/events",
+                headers={"authorization": f"Bearer {TOKEN}"},
+            )
+            self.assertIn(b'"type":"email"', event_body)
+            self.assertNotIn(b"_privateLinks", event_body)
+            self.assertNotIn(b"private=do-not-return", event_body)
+            email_report = completed_report(event_body)
+            plan = {step["id"]: step["status"] for step in email_report["executionPlan"]}
+            self.assertEqual(plan["http"], "completed")
+            self.assertEqual(plan["static"], "completed")
+            self.assertEqual(plan["browser"], "skipped")
+            self.assertNotIn("pending", plan.values())
 
             status, _, body = await asgi_request(
                 self.app,
@@ -157,6 +244,56 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(status, 400)
             self.assertEqual(json.loads(body)["error"]["code"], "INVALID_URL")
 
+    async def test_selected_email_link_requires_completed_source_and_uses_private_target(self):
+        email_id = uuid4()
+        selected_scan_id = uuid4()
+        async with self.app.router.lifespan_context(self.app):
+            status, _, body = await asgi_request(
+                self.app,
+                "POST",
+                "/v1/scans",
+                headers=request_headers(),
+                body=json.dumps(email_payload(email_id)).encode(),
+            )
+            self.assertEqual(status, 200)
+            await self.analyzer.started.wait()
+            _, _, email_events = await asgi_request(
+                self.app,
+                "GET",
+                f"/v1/scans/{email_id}/events",
+                headers={"authorization": f"Bearer {TOKEN}"},
+            )
+            self.assertIn(b'"type":"email"', email_events)
+
+            link_payload = {
+                "scanId": str(selected_scan_id),
+                "type": "email_link",
+                "originalScanId": str(email_id),
+                "linkId": str(self.analyzer.email_link_id),
+                "consent": True,
+            }
+            status, _, body = await asgi_request(
+                self.app,
+                "POST",
+                "/v1/scans",
+                headers=request_headers(),
+                body=json.dumps(link_payload).encode(),
+            )
+            self.assertEqual(status, 200)
+            _, _, link_events = await asgi_request(
+                self.app,
+                "GET",
+                f"/v1/scans/{selected_scan_id}/events",
+                headers={"authorization": f"Bearer {TOKEN}"},
+            )
+            self.assertIn(b'"type":"email_link"', link_events)
+            self.assertEqual(completed_report(link_events)["type"], "email_link")
+            self.assertEqual(
+                self.analyzer.seen_urls[-1],
+                "https://example.com/path?private=do-not-return",
+            )
+            self.assertNotIn(b"private=do-not-return", link_events)
+
     async def test_rejects_oversized_request_before_parsing(self):
         async with self.app.router.lifespan_context(self.app):
             status, _, body = await asgi_request(
@@ -165,7 +302,7 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
                 "/v1/scans",
                 headers={
                     **request_headers(),
-                    "content-length": "9000",
+                    "content-length": str(self.settings.request_body_limit_bytes + 1),
                 },
                 body=b"",
             )

@@ -58,6 +58,24 @@ const planStepLabels: Record<ScanPlanStep['id'], string> = {
   report: 'Assemble the evidence report',
 };
 
+function planStepLabel(id: ScanPlanStep['id'], type: ScanReport['type']) {
+  if (type === 'email') {
+    const emailLabels: Record<ScanPlanStep['id'], string> = {
+      consent_target: 'Validate consent and email file',
+      sandbox: 'Start an isolated email sandbox',
+      http: 'Review email headers',
+      static: 'Inspect message body and attachment metadata',
+      browser: 'Visit a selected link after consent',
+      report: 'Assemble the evidence report',
+    };
+    return emailLabels[id];
+  }
+  if (type === 'email_link' && id === 'consent_target') {
+    return 'Validate selected-link consent and target';
+  }
+  return planStepLabels[id];
+}
+
 const planStatusLabels: Record<ScanPlanStep['status'], string> = {
   pending: 'Waiting',
   running: 'In progress',
@@ -80,7 +98,22 @@ const planReasonLabels: Record<NonNullable<ScanPlanStep['reasonCode']>, string> 
   analysis_failed: 'The step ended before completion.',
 };
 
-function ExecutionPlanList({ steps, testId }: { steps: ScanPlanStep[]; testId: string }) {
+function planReasonLabel(reason: NonNullable<ScanPlanStep['reasonCode']>, type: ScanReport['type']) {
+  if (type === 'email' && reason === 'no_browser_required') {
+    return 'Links are only visited after separate consent.';
+  }
+  return planReasonLabels[reason];
+}
+
+function ExecutionPlanList({
+  steps,
+  testId,
+  type,
+}: {
+  steps: ScanPlanStep[];
+  testId: string;
+  type: ScanReport['type'];
+}) {
   return (
     <section className="mt-5" aria-label="Execution plan" data-testid={testId}>
       <h3 className="text-sm font-semibold">Execution plan</h3>
@@ -97,8 +130,8 @@ function ExecutionPlanList({ steps, testId }: { steps: ScanPlanStep[]; testId: s
               {step.status === 'completed' ? '✓' : step.status === 'running' ? '…' : step.status === 'failed' || step.status === 'blocked' ? '!' : step.status === 'skipped' ? '–' : '·'}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">{planStepLabels[step.id]}</p>
-              {step.reasonCode && <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{planReasonLabels[step.reasonCode]}</p>}
+              <p className="text-sm font-medium">{planStepLabel(step.id, type)}</p>
+              {step.reasonCode && <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{planReasonLabel(step.reasonCode, type)}</p>}
             </div>
             <span className="shrink-0 pt-0.5 text-xs text-muted-foreground">{planStatusLabels[step.status]}</span>
           </li>
@@ -154,7 +187,7 @@ function escapeHtml(value: unknown) {
 
 function reportHtml(report: ScanReport) {
   const executionPlan = (report.executionPlan ?? []).map((step) => `
-    <li><strong>${escapeHtml(planStepLabels[step.id])}</strong> — ${escapeHtml(planStatusLabels[step.status])}${step.reasonCode ? `: ${escapeHtml(planReasonLabels[step.reasonCode])}` : ''}</li>`).join('');
+    <li><strong>${escapeHtml(planStepLabel(step.id, report.type))}</strong> — ${escapeHtml(planStatusLabels[step.status])}${step.reasonCode ? `: ${escapeHtml(planReasonLabel(step.reasonCode, report.type))}` : ''}</li>`).join('');
   const findings = report.findings.map((finding) => `
     <article class="finding">
       <div class="meta">${escapeHtml(finding.severity)} · ${escapeHtml(finding.strength)} · ${escapeHtml(finding.source.replace(/_/g, ' '))}</div>
@@ -203,6 +236,7 @@ export default function AnalyzerPage() {
   const [progress, setProgress] = useState<ScanProgress | null>(null);
   const [report, setReport] = useState<ScanReport | null>(null);
   const [emailReport, setEmailReport] = useState<ScanReport | null>(null);
+  const [scanType, setScanType] = useState<ScanReport['type']>('url');
   const [streamError, setStreamError] = useState('');
   const [streamFinished, setStreamFinished] = useState(false);
   const [selectedLinkId, setSelectedLinkId] = useState('');
@@ -281,8 +315,9 @@ export default function AnalyzerPage() {
     }
   }, [scanQuery.data, report]);
 
-  function beginAccepted(accepted: ScanAccepted, preserveEmail = false) {
+  function beginAccepted(accepted: ScanAccepted, type: ScanReport['type'], preserveEmail = false) {
     setScanAccepted(accepted);
+    setScanType(type);
     setProgress(null);
     setReport(null);
     setStreamError('');
@@ -315,7 +350,7 @@ export default function AnalyzerPage() {
     createUrl.mutate(
       { data: { url: target, consent: true } },
       {
-        onSuccess: (accepted) => beginAccepted(accepted),
+        onSuccess: (accepted) => beginAccepted(accepted, 'url'),
         onError: (error) => setFormError(safeErrorMessage(error)),
       },
     );
@@ -343,7 +378,7 @@ export default function AnalyzerPage() {
     createEmail.mutate(
       { data: { file, consent: true } },
       {
-        onSuccess: (accepted) => beginAccepted(accepted),
+        onSuccess: (accepted) => beginAccepted(accepted, 'email'),
         onError: (error) => setFormError(safeErrorMessage(error)),
       },
     );
@@ -363,7 +398,7 @@ export default function AnalyzerPage() {
     createSelectedLink.mutate(
       { scanId: emailReport.scanId, linkId: selectedLinkId, data: { consent: true } },
       {
-        onSuccess: (accepted) => beginAccepted(accepted, true),
+        onSuccess: (accepted) => beginAccepted(accepted, 'email_link', true),
         onError: (error) => setFormError(safeErrorMessage(error)),
       },
     );
@@ -539,7 +574,7 @@ export default function AnalyzerPage() {
                     <p className="mt-1 text-xs text-muted-foreground">{progress ? `${progress.completedSteps} of ${progress.totalSteps} plan steps resolved` : 'Waiting for the scan service to publish its execution plan.'}</p>
                   {streamError && <p className="mt-2 text-xs text-muted-foreground" data-testid="status-stream-recovery">{streamError}</p>}
                 </div>
-                  {progress?.plan && <ExecutionPlanList steps={progress.plan} testId="live-execution-plan" />}
+                  {progress?.plan && <ExecutionPlanList steps={progress.plan} testId="live-execution-plan" type={scanType} />}
                 {scanQuery.isError && <p className="mt-3 text-sm text-muted-foreground">Unable to recover the latest status. Waiting for the live scan stream.</p>}
               </div>
             ) : activeReport ? (
@@ -613,7 +648,7 @@ function ReportView({
         : 'border-border bg-muted/30 text-muted-foreground';
   const attachments = report.findings.filter((finding) => finding.source === 'attachment_metadata');
   return (
-    <article className="overflow-hidden rounded-xl border border-border bg-card shadow-sm" data-testid="report-analysis">
+    <article id="veridict-print-report" className="overflow-hidden rounded-xl border border-border bg-card shadow-sm" data-testid="report-analysis">
       <header className="border-b border-border px-5 py-5 sm:px-6">
         <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
           <div>
@@ -626,7 +661,7 @@ function ReportView({
             </div>
             <p className="mt-2 text-xs text-muted-foreground">Completed {formatDate(report.completedAt)} · Ruleset {report.ruleSetVersion}</p>
           </div>
-          <div className="flex gap-2 print:hidden">
+          <div className="flex gap-2 print:hidden" data-testid="report-actions">
             <button type="button" onClick={onExport} data-testid="button-export-html" className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-input bg-background px-3 text-sm font-medium hover:bg-muted">
               <Download className="size-4" aria-hidden="true" /> Export HTML
             </button>
@@ -681,7 +716,7 @@ function ReportView({
         </section>
 
         {!!report.executionPlan?.length && (
-          <ExecutionPlanList steps={report.executionPlan} testId="report-execution-plan" />
+          <ExecutionPlanList steps={report.executionPlan} testId="report-execution-plan" type={report.type} />
         )}
 
         {attachments.length > 0 && (

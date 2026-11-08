@@ -35,7 +35,7 @@ class WorkerSettings:
     sandbox_kill_seconds: int = 180
     queue_limit: int = 10
     report_ttl_seconds: int = 900
-    request_body_limit_bytes: int = 8192
+    request_body_limit_bytes: int = 15 * 1024 * 1024
 
     @classmethod
     def from_env(cls) -> WorkerSettings:
