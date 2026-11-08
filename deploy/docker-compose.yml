@@ -39,6 +39,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: "8080"
+      SCAN_QUOTA_LIMITS_ENABLED: "${SCAN_QUOTA_LIMITS_ENABLED:-true}"
       NODE_EXTRA_CA_CERTS: /etc/veridict/worker-ca.pem
       TRUSTED_PROXY_CIDRS: "10.0.1.0/24,172.30.0.0/24"
     depends_on:

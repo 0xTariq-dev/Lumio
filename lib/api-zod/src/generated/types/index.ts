@@ -31,6 +31,8 @@ export * from './scanPlanStepReasonCode';
 export * from './scanPlanStepStatus';
 export * from './scanProgress';
 export * from './scanProgressStage';
+export * from './scanQuotaStatus';
+export * from './scanQuotaWindow';
 export * from './scanReport';
 export * from './scanReportRiskBand';
 export * from './scanReportType';

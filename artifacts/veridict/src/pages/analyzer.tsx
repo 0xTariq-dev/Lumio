@@ -419,8 +419,14 @@ export default function AnalyzerPage() {
     createUrl.mutate(
       { data: { url: target, consent: true } },
       {
-        onSuccess: (accepted) => beginAccepted(accepted, 'url'),
-        onError: (error) => setFormError(safeErrorMessage(error)),
+        onSuccess: (accepted) => {
+          void statusQuery.refetch();
+          beginAccepted(accepted, 'url');
+        },
+        onError: (error) => {
+          void statusQuery.refetch();
+          setFormError(safeErrorMessage(error));
+        },
       },
     );
   }
@@ -447,8 +453,14 @@ export default function AnalyzerPage() {
     createEmail.mutate(
       { data: { file, consent: true } },
       {
-        onSuccess: (accepted) => beginAccepted(accepted, 'email'),
-        onError: (error) => setFormError(safeErrorMessage(error)),
+        onSuccess: (accepted) => {
+          void statusQuery.refetch();
+          beginAccepted(accepted, 'email');
+        },
+        onError: (error) => {
+          void statusQuery.refetch();
+          setFormError(safeErrorMessage(error));
+        },
       },
     );
   }
@@ -467,8 +479,14 @@ export default function AnalyzerPage() {
     createSelectedLink.mutate(
       { scanId: emailReport.scanId, linkId: selectedLinkId, data: { consent: true } },
       {
-        onSuccess: (accepted) => beginAccepted(accepted, 'email_link', true),
-        onError: (error) => setFormError(safeErrorMessage(error)),
+        onSuccess: (accepted) => {
+          void statusQuery.refetch();
+          beginAccepted(accepted, 'email_link', true);
+        },
+        onError: (error) => {
+          void statusQuery.refetch();
+          setFormError(safeErrorMessage(error));
+        },
       },
     );
   }
@@ -666,6 +684,24 @@ export default function AnalyzerPage() {
                 </div>
               )}
               {statusQuery.isError && <div role="alert" data-testid="error-readiness" className="mt-3 flex items-center justify-between gap-3 text-sm text-destructive"><span>Analyzer readiness could not be confirmed. Retry before submitting a scan.</span><button type="button" onClick={() => void statusQuery.refetch()} data-testid="button-retry-readiness" className="min-h-11 shrink-0 rounded-md border border-destructive/30 px-2.5 py-1.5 font-medium hover:bg-destructive/5">Retry</button></div>}
+
+              {status?.scanQuota.enabled && (
+                <section
+                  aria-label="Scan usage"
+                  data-testid="status-scan-quota"
+                  className="mt-4 rounded-lg border border-border bg-muted/30 px-4 py-3 text-sm"
+                >
+                  <h3 className="font-semibold">Scan usage</h3>
+                  <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <p data-testid="text-scan-quota-daily">
+                      Today: <strong>{status.scanQuota.daily.used ?? '—'}/{status.scanQuota.daily.total}</strong> used
+                    </p>
+                    <p data-testid="text-scan-quota-lifetime">
+                      Lifetime: <strong>{status.scanQuota.lifetime.used ?? '—'}/{status.scanQuota.lifetime.total}</strong> used
+                    </p>
+                  </div>
+                </section>
+              )}
 
               <div className="mt-5 grid grid-cols-2 gap-3 border-t border-border pt-4 text-xs text-muted-foreground">
                 <div className="flex items-center gap-2"><LockKeyhole className="size-3.5" aria-hidden="true" /> Consent before every scan</div>

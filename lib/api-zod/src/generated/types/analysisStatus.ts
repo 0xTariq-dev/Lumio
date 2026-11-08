@@ -8,10 +8,12 @@
 import type { AnalysisStatusWorkerStatus } from './analysisStatusWorkerStatus';
 import type { QueueStatus } from './queueStatus';
 import type { ScanLimits } from './scanLimits';
+import type { ScanQuotaStatus } from './scanQuotaStatus';
 
 export interface AnalysisStatus {
   workerStatus: AnalysisStatusWorkerStatus;
   scannerAvailable: boolean;
   queue: QueueStatus;
   limits: ScanLimits;
+  scanQuota: ScanQuotaStatus;
 }

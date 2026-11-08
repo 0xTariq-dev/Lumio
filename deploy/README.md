@@ -17,6 +17,14 @@ The Compose project expects:
 - `/etc/veridict/worker-ca.pem` (`0644`, public CA certificate only): the CA
   that issued the worker's private-network TLS certificate.
 - `VERIDICT_HOST` in the Compose environment: the public HTTPS hostname.
+- `SCAN_QUOTA_LIMITS_ENABLED` is optional and defaults to `true`. Set it to
+  `false` in the Coolify Compose environment to disable the per-client daily
+  and lifetime caps for testing. The 2-per-minute burst guard, global API
+  request limit, and worker queue limits remain active.
+
+When the cap is enabled, the analyzer shows each visitor's daily and lifetime
+usage. Each cap allows 15 scans. The counters use HMAC-derived IP and signed
+browser identifiers; raw addresses and browser tokens are not stored.
 
 `ANALYSIS_WORKER_URL` must be the worker's private VPC HTTPS URL. The API
 container trusts only the mounted CA for that connection. The browser never

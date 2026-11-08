@@ -24,6 +24,10 @@ export const getAnalysisStatusResponseQueueActiveMin = 0;
 
 export const getAnalysisStatusResponseQueueQueuedMin = 0;
 
+export const getAnalysisStatusResponseScanQuotaDailyUsedMin = 0;
+
+export const getAnalysisStatusResponseScanQuotaLifetimeUsedMin = 0;
+
 
 
 export const GetAnalysisStatusResponse = zod.object({
@@ -42,8 +46,19 @@ export const GetAnalysisStatusResponse = zod.object({
   "browserTimeoutSeconds": zod.literal(90),
   "sandboxKillSeconds": zod.literal(180),
   "startsPerMinute": zod.literal(2),
-  "startsPerDay": zod.literal(5),
-  "lifetimeStartsPerIp": zod.literal(10)
+  "startsPerDay": zod.literal(15),
+  "lifetimeStartsPerIp": zod.literal(15)
+}),
+  "scanQuota": zod.object({
+  "enabled": zod.boolean().describe('Whether the daily and lifetime per-client caps are enforced.'),
+  "daily": zod.object({
+  "used": zod.int().min(getAnalysisStatusResponseScanQuotaDailyUsedMin).nullable().describe('Null when quota caps are disabled.'),
+  "total": zod.literal(15)
+}),
+  "lifetime": zod.object({
+  "used": zod.int().min(getAnalysisStatusResponseScanQuotaLifetimeUsedMin).nullable().describe('Null when quota caps are disabled.'),
+  "total": zod.literal(15)
+})
 })
 })
 

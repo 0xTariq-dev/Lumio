@@ -1,6 +1,10 @@
 import { createHmac, randomUUID } from "node:crypto";
 import type { Request, Response } from "express";
 import { pool } from "@workspace/db";
+import {
+  areScanQuotaLimitsEnabled,
+  SCAN_LIMITS,
+} from "./scan-quota-config";
 
 const CLIENT_COOKIE = "veridict_client";
 const CLIENT_COOKIE_MAX_AGE = 365 * 24 * 60 * 60 * 1000;
@@ -33,6 +37,12 @@ export type QuotaReservationResult =
 interface QuotaRow {
   minuteWindowStartedAt: Date;
   minuteCount: number;
+  dailyWindowStartedAt: Date;
+  dailyCount: number;
+  lifetimeCount: number;
+}
+
+interface QuotaUsageRow {
   dailyWindowStartedAt: Date;
   dailyCount: number;
   lifetimeCount: number;
@@ -78,6 +88,41 @@ function utcDayStart(now: Date): Date {
   );
 }
 
+export async function getScanQuotaUsage(
+  ipAddress: string,
+  browserToken: string,
+): Promise<{ dailyUsed: number; lifetimeUsed: number }> {
+  if (!ipAddress) {
+    throw new QuotaConfigurationError();
+  }
+
+  const quotaKeys = [
+    digestKey("ip", ipAddress),
+    digestKey("browser", browserToken),
+  ].sort();
+  const todayStart = utcDayStart(new Date());
+  const result = await pool.query<QuotaUsageRow>(
+    `SELECT
+      daily_window_started_at AS "dailyWindowStartedAt",
+      daily_count AS "dailyCount",
+      lifetime_count AS "lifetimeCount"
+    FROM veridict_scan_quotas
+    WHERE quota_key = ANY($1::text[])`,
+    [quotaKeys],
+  );
+
+  return result.rows.reduce(
+    (usage, row) => ({
+      dailyUsed: Math.max(
+        usage.dailyUsed,
+        row.dailyWindowStartedAt >= todayStart ? row.dailyCount : 0,
+      ),
+      lifetimeUsed: Math.max(usage.lifetimeUsed, row.lifetimeCount),
+    }),
+    { dailyUsed: 0, lifetimeUsed: 0 },
+  );
+}
+
 export async function reserveScanStart(
   ipAddress: string,
   browserToken: string,
@@ -89,6 +134,7 @@ export async function reserveScanStart(
   const now = new Date();
   const minuteCutoff = new Date(now.getTime() - 60_000);
   const todayStart = utcDayStart(now);
+  const enforceDailyAndLifetimeLimits = areScanQuotaLimitsEnabled();
   const quotaKeys = [
     digestKey("ip", ipAddress),
     digestKey("browser", browserToken),
@@ -138,7 +184,7 @@ export async function reserveScanStart(
       const effectiveMinuteCount = minuteExpired ? 0 : row.minuteCount;
       const effectiveDayCount = dayExpired ? 0 : row.dailyCount;
 
-      if (effectiveMinuteCount >= 2) {
+      if (effectiveMinuteCount >= SCAN_LIMITS.startsPerMinute) {
         await client.query("ROLLBACK");
         const retryAfterSeconds = minuteExpired
           ? 1
@@ -151,7 +197,10 @@ export async function reserveScanStart(
             );
         return { allowed: false, reason: "minute", retryAfterSeconds };
       }
-      if (effectiveDayCount >= 5) {
+      if (
+        enforceDailyAndLifetimeLimits &&
+        effectiveDayCount >= SCAN_LIMITS.startsPerDay
+      ) {
         await client.query("ROLLBACK");
         const nextDay = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
         return {
@@ -163,7 +212,10 @@ export async function reserveScanStart(
           ),
         };
       }
-      if (row.lifetimeCount >= 10) {
+      if (
+        enforceDailyAndLifetimeLimits &&
+        row.lifetimeCount >= SCAN_LIMITS.lifetimeStartsPerIp
+      ) {
         await client.query("ROLLBACK");
         return { allowed: false, reason: "lifetime" };
       }

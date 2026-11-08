@@ -33,16 +33,34 @@ export const ScanLimitsValue = {
   browserTimeoutSeconds: 90,
   sandboxKillSeconds: 180,
   startsPerMinute: 2,
-  startsPerDay: 5,
-  lifetimeStartsPerIp: 10,
+  startsPerDay: 15,
+  lifetimeStartsPerIp: 15,
 } as const;
 export type ScanLimits = typeof ScanLimitsValue;
+
+export interface ScanQuotaWindow {
+  /**
+     * Null when quota caps are disabled.
+     * @minimum 0
+     * @nullable
+     */
+  used: number | null;
+  total: 15;
+}
+
+export interface ScanQuotaStatus {
+  /** Whether the daily and lifetime per-client caps are enforced. */
+  enabled: boolean;
+  daily: ScanQuotaWindow;
+  lifetime: ScanQuotaWindow;
+}
 
 export interface AnalysisStatus {
   workerStatus: AnalysisStatusWorkerStatus;
   scannerAvailable: boolean;
   queue: QueueStatus;
   limits: ScanLimits;
+  scanQuota: ScanQuotaStatus;
 }
 
 export interface UrlScanInput {

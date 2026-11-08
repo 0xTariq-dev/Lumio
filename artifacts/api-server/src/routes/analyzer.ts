@@ -24,7 +24,12 @@ import {
 } from "../lib/analysis-worker";
 import { normalizeScanTargetInput } from "../lib/normalize-target";
 import {
+  areScanQuotaLimitsEnabled,
+  SCAN_LIMITS,
+} from "../lib/scan-quota-config";
+import {
   getOrCreateBrowserToken,
+  getScanQuotaUsage,
   QuotaConfigurationError,
   refundRejectedScan,
   reserveScanStart,
@@ -329,7 +334,9 @@ async function reserveQuota(
       const message =
         result.reason === "lifetime"
           ? "This network or browser has reached its total scan limit."
-          : "The scan start limit has been reached. Please try again later.";
+          : result.reason === "day"
+            ? "This network or browser has reached its daily scan limit."
+            : "The scan start limit has been reached. Please try again shortly.";
       sendApiError(
         res,
         429,
@@ -440,8 +447,15 @@ async function createScan(
     .json(responseSchema.parse(acceptedBody(scanId, workerResult.status)));
 }
 
-router.get("/analysis/status", async (_req, res) => {
+router.get("/analysis/status", async (req, res) => {
   const worker = await getAnalysisWorkerHealth();
+  const quotaLimitsEnabled = areScanQuotaLimitsEnabled();
+  const quotaUsage = quotaLimitsEnabled
+    ? await getScanQuotaUsage(
+        req.ip || req.socket.remoteAddress || "",
+        getOrCreateBrowserToken(req, res),
+      )
+    : null;
   const data = GetAnalysisStatusResponse.parse({
     workerStatus: worker ? "ready" : "unavailable",
     scannerAvailable: Boolean(
@@ -459,9 +473,20 @@ router.get("/analysis/status", async (_req, res) => {
       maxExtractedLinks: 50,
       browserTimeoutSeconds: 90,
       sandboxKillSeconds: 180,
-      startsPerMinute: 2,
-      startsPerDay: 5,
-      lifetimeStartsPerIp: 10,
+      startsPerMinute: SCAN_LIMITS.startsPerMinute,
+      startsPerDay: SCAN_LIMITS.startsPerDay,
+      lifetimeStartsPerIp: SCAN_LIMITS.lifetimeStartsPerIp,
+    },
+    scanQuota: {
+      enabled: quotaLimitsEnabled,
+      daily: {
+        used: quotaUsage?.dailyUsed ?? null,
+        total: SCAN_LIMITS.startsPerDay,
+      },
+      lifetime: {
+        used: quotaUsage?.lifetimeUsed ?? null,
+        total: SCAN_LIMITS.lifetimeStartsPerIp,
+      },
     },
   });
   res.json(data);

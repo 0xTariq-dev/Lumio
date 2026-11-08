@@ -314,7 +314,7 @@ components:
         - status
     AnalysisStatus:
       type: object
-      required: [workerStatus, scannerAvailable, queue, limits]
+      required: [workerStatus, scannerAvailable, queue, limits, scanQuota]
       properties:
         workerStatus:
           type: string
@@ -325,6 +325,30 @@ components:
           $ref: "#/components/schemas/QueueStatus"
         limits:
           $ref: "#/components/schemas/ScanLimits"
+        scanQuota:
+          $ref: "#/components/schemas/ScanQuotaStatus"
+    ScanQuotaStatus:
+      type: object
+      required: [enabled, daily, lifetime]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether the daily and lifetime per-client caps are enforced.
+        daily:
+          $ref: "#/components/schemas/ScanQuotaWindow"
+        lifetime:
+          $ref: "#/components/schemas/ScanQuotaWindow"
+    ScanQuotaWindow:
+      type: object
+      required: [used, total]
+      properties:
+        used:
+          type: [integer, "null"]
+          minimum: 0
+          description: Null when quota caps are disabled.
+        total:
+          type: integer
+          const: 15
     QueueStatus:
       type: object
       required: [active, queued, activeLimit, queuedLimit]
@@ -373,10 +397,10 @@ components:
           const: 2
         startsPerDay:
           type: integer
-          const: 5
+          const: 15
         lifetimeStartsPerIp:
           type: integer
-          const: 10
+          const: 15
     UrlScanInput:
       type: object
       required: [url, consent]

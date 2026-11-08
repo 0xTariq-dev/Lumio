@@ -13,7 +13,7 @@ export const ScanLimitsValue = {
   browserTimeoutSeconds: 90,
   sandboxKillSeconds: 180,
   startsPerMinute: 2,
-  startsPerDay: 5,
-  lifetimeStartsPerIp: 10,
+  startsPerDay: 15,
+  lifetimeStartsPerIp: 15,
 } as const;
 export type ScanLimits = typeof ScanLimitsValue;
