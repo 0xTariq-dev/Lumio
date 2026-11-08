@@ -1,5 +1,4 @@
 import { createHash, createHmac } from "node:crypto";
-import { ipKeyGenerator, rateLimit as expressRateLimit } from "express-rate-limit";
 import {
   Router,
   type IRouter,
@@ -173,30 +172,6 @@ router.use(
   "/scans/:scanId/explanation/stream",
   validateExplanationRequest,
   enforceBoundedExplanationRateLimit,
-  expressRateLimit({
-    windowMs: 60_000,
-    limit: EXPLANATION_REQUESTS_PER_IP_PER_MINUTE,
-    standardHeaders: "draft-8",
-    legacyHeaders: false,
-    keyGenerator: (req) => {
-      const ip = req.ip ?? "";
-      const normalizedIp = ip ? ipKeyGenerator(ip, 56) : "missing-ip";
-      const secret = process.env.SESSION_SECRET ?? "unconfigured";
-      return createHmac("sha256", secret)
-        .update("veridict:express-explanation-limit:v1\0")
-        .update(normalizedIp)
-        .digest("hex");
-    },
-    handler: (_req, res) => {
-      sendError(
-        res,
-        429,
-        "EXPLANATION_RATE_LIMITED",
-        "Too many explanation requests. Try again later; your report is unchanged.",
-        true,
-      );
-    },
-  }),
 );
 
 router.post(
