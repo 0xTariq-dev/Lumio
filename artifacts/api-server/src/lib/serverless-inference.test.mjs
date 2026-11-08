@@ -4,6 +4,7 @@ import {
   buildExplanationEvidence,
   createExplanationToken,
   DEFAULT_VULTR_INFERENCE_MODEL,
+  getVultrInferenceConfig,
   streamVultrExplanation,
   verifyExplanationToken,
 } from "./serverless-inference.ts";
@@ -31,6 +32,14 @@ const testEnv = {
   SESSION_SECRET: "s".repeat(40),
   VULTR_INFERENCE_API_KEY: "synthetic-test-key",
 };
+
+test("inference config prefers the subscription secret and trims its value", () => {
+  const config = getVultrInferenceConfig({
+    INFERECE_SUBSCRIPTION_KEY: "  subscription-test-key  ",
+    VULTR_INFERENCE_API_KEY: "legacy-test-key",
+  });
+  assert.equal(config?.apiKey, "subscription-test-key");
+});
 
 test("explanation evidence redacts observed PII and excludes report links", () => {
   const evidence = buildExplanationEvidence(report);
