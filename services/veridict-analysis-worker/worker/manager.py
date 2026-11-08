@@ -11,22 +11,44 @@ from .contracts import ProgressPayload, ScanReport, ScanSnapshot, URLScanRequest
 from .settings import WorkerSettings
 
 
-ProgressCallback = Callable[[str], Awaitable[None]]
+ProgressCallback = Callable[[str, str | None], Awaitable[None]]
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
 PROGRESS_MESSAGES = {
     "queued": ("queued", "Waiting for an isolated scan slot.", 0),
     "starting_sandbox": ("starting_sandbox", "Starting a temporary analysis sandbox.", 1),
     "navigating": ("navigating", "Inspecting the public page.", 2),
     "collecting_evidence": ("collecting_evidence", "Collecting technical evidence.", 3),
+    "http_failed": ("http_failed", "HTTP inspection did not complete; coverage may be reduced.", 3),
+    "browser_inspection": ("browser_inspection", "Checking the page in a browser based on observed signals.", 4),
+    "browser_completed": ("browser_completed", "Browser inspection completed.", 4),
+    "browser_skipped": ("browser_skipped", "Browser inspection was skipped based on observed signals.", 4),
+    "browser_blocked": ("browser_blocked", "Browser inspection was blocked by the scan policy.", 4),
+    "browser_failed": ("browser_failed", "Browser inspection did not complete; coverage may be reduced.", 4),
     "building_report": ("building_report", "Preparing the evidence report.", 4),
+    "completed": ("completed", "The execution plan completed and the report is ready.", 6),
+    "failed": ("failed", "Analysis ended before all planned steps completed.", 0),
 }
+PLAN_TEMPLATE = (
+    {"id": "consent_target", "status": "completed", "reasonCode": "consent_checked"},
+    {"id": "sandbox", "status": "pending"},
+    {"id": "http", "status": "pending"},
+    {"id": "static", "status": "pending"},
+    {"id": "browser", "status": "pending"},
+    {"id": "report", "status": "pending"},
+)
+URL_PLAN_ACTIONS = ("http", "static", "browser", "report")
+RESOLVED_PLAN_STATUSES = {"completed", "skipped", "failed", "blocked"}
 
 
 class URLAnalyzer(Protocol):
     async def prepare(self) -> None: ...
 
     async def analyze(
-        self, scan_id: str, url: str, progress: ProgressCallback
+        self,
+        scan_id: str,
+        url: str,
+        task_plan: list[str],
+        progress: ProgressCallback,
     ) -> dict[str, Any]: ...
 
 
@@ -160,19 +182,124 @@ class ScanManager:
             self._records.pop(scan_id, None)
 
     async def _publish_progress(
-        self, record: ScanRecord, stage: str, *, status: str | None = None
+        self,
+        record: ScanRecord,
+        stage: str,
+        *,
+        reason_code: str | None = None,
+        status: str | None = None,
     ) -> None:
-        progress_stage, message, completed_steps = PROGRESS_MESSAGES[stage]
+        progress_stage, message, _ = PROGRESS_MESSAGES[stage]
+        plan = self._plan_for_stage(
+            stage,
+            record.latest_progress,
+            reason_code=reason_code,
+        )
+        completed_steps = sum(
+            step["status"] in RESOLVED_PLAN_STATUSES for step in plan
+        )
         progress = ProgressPayload(
             stage=progress_stage,  # type: ignore[arg-type]
             message=message,
             completedSteps=completed_steps,
-            totalSteps=4,
+            totalSteps=len(plan),
+            plan=plan,
         )
         record.latest_progress = to_jsonable(progress)
         await self._publish(
             record, "progress", record.latest_progress, status=status
         )
+
+    @staticmethod
+    def _plan_for_stage(
+        stage: str,
+        previous_progress: dict[str, Any] | None,
+        *,
+        reason_code: str | None,
+    ) -> list[dict[str, Any]]:
+        plan = [dict(step) for step in PLAN_TEMPLATE]
+        steps = {step["id"]: step for step in plan}
+
+        def set_step(step_id: str, state: str, reason: str | None = None) -> None:
+            step = steps[step_id]
+            step["status"] = state
+            step.pop("reasonCode", None)
+            if reason:
+                step["reasonCode"] = reason
+
+        if stage == "failed":
+            previous_plan = (
+                previous_progress.get("plan")
+                if isinstance(previous_progress, dict)
+                else None
+            )
+            if isinstance(previous_plan, list) and len(previous_plan) == len(plan):
+                plan = [dict(step) for step in previous_plan]
+                steps = {step["id"]: step for step in plan}
+            running = [step for step in plan if step["status"] == "running"]
+            if running:
+                running[0]["status"] = "failed"
+                running[0]["reasonCode"] = "analysis_failed"
+            else:
+                set_step("report", "failed", "analysis_failed")
+            for step in plan:
+                if step["status"] == "pending":
+                    step["status"] = "skipped"
+                    step["reasonCode"] = "earlier_step_failed"
+            return plan
+
+        if stage == "starting_sandbox":
+            set_step("sandbox", "running")
+        elif stage == "navigating":
+            set_step("sandbox", "completed")
+            set_step("http", "running")
+        elif stage == "http_failed":
+            set_step("http", "failed", reason_code or "http_fetch_failed")
+            set_step("static", "skipped", "http_unavailable")
+            set_step("browser", "skipped", "http_unavailable")
+        elif stage == "collecting_evidence":
+            set_step("sandbox", "completed")
+            set_step("http", "completed")
+            set_step("static", "running")
+        elif stage == "browser_inspection":
+            set_step("sandbox", "completed")
+            set_step("http", "completed")
+            set_step("static", "completed")
+            set_step("browser", "running")
+        elif stage == "browser_completed":
+            set_step("sandbox", "completed")
+            set_step("http", "completed")
+            set_step("static", "completed")
+            set_step("browser", "completed")
+        elif stage == "browser_skipped":
+            set_step("sandbox", "completed")
+            if steps["http"]["status"] not in {"failed", "skipped"}:
+                set_step("http", "completed")
+            if steps["static"]["status"] not in {"failed", "skipped"}:
+                set_step("static", "completed")
+            set_step("browser", "skipped", reason_code or "no_browser_required")
+        elif stage == "browser_blocked":
+            set_step("sandbox", "completed")
+            set_step("http", "completed")
+            set_step("static", "completed")
+            set_step("browser", "blocked", reason_code or "redirect_blocked")
+        elif stage == "browser_failed":
+            set_step("sandbox", "completed")
+            set_step("http", "completed")
+            set_step("static", "completed")
+            set_step("browser", "failed", reason_code or "browser_error")
+        elif stage == "building_report":
+            for step_id in ("sandbox", "http", "static"):
+                if steps[step_id]["status"] in {"pending", "running"}:
+                    set_step(step_id, "completed")
+            if steps["browser"]["status"] in {"pending", "running"}:
+                set_step("browser", "skipped", "no_browser_required")
+            set_step("report", "running")
+        elif stage == "completed":
+            if steps["browser"]["status"] == "pending":
+                set_step("browser", "skipped", "no_browser_required")
+            set_step("report", "completed")
+        return plan
 
     async def _publish(
         self,
@@ -217,16 +344,28 @@ class ScanManager:
                 continue
             self._active_scan_id = scan_id
 
-            async def progress(stage: str) -> None:
-                await self._publish_progress(record, stage)
+            async def progress(
+                stage: str, reason_code: str | None = None
+            ) -> None:
+                await self._publish_progress(
+                    record, stage, reason_code=reason_code
+                )
 
             try:
                 await self._publish_progress(
                     record, "starting_sandbox", status="running"
                 )
                 report_data = await self.analyzer.analyze(
-                    scan_id, request.url, progress
+                    scan_id,
+                    request.url,
+                    list(URL_PLAN_ACTIONS),
+                    progress,
                 )
+                await self._publish_progress(record, "completed")
+                report_data = {
+                    **report_data,
+                    "executionPlan": record.latest_progress["plan"],
+                }
                 report = ScanReport.model_validate(report_data)
                 if str(report.scanId) != scan_id or report.type != "url":
                     raise ValueError("Worker report identity mismatch")
@@ -235,6 +374,9 @@ class ScanManager:
                     record, "completed", record.report, status="completed"
                 )
             except asyncio.CancelledError:
+                await self._publish_progress(
+                    record, "failed", status="cancelled"
+                )
                 await self._publish(
                     record,
                     "failed",
@@ -255,6 +397,7 @@ class ScanManager:
                         "error_type": type(exc).__name__,
                     },
                 )
+                await self._publish_progress(record, "failed", status="failed")
                 await self._publish(
                     record,
                     "failed",

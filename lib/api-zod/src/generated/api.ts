@@ -97,6 +97,9 @@ export const getScanResponseLatestProgressMessageMax = 160;
 export const getScanResponseLatestProgressCompletedStepsMin = 0;
 
 
+export const getScanResponseLatestProgressPlanMin = 6;
+export const getScanResponseLatestProgressPlanMax = 6;
+
 
 
 export const GetScanResponse = zod.object({
@@ -106,10 +109,15 @@ export const GetScanResponse = zod.object({
   "createdAt": zod.coerce.date(),
   "expiresAt": zod.coerce.date(),
   "latestProgress": zod.object({
-  "stage": zod.enum(['validating', 'queued', 'starting_sandbox', 'navigating', 'collecting_evidence', 'analyzing_email', 'building_report']),
+  "stage": zod.enum(['validating', 'queued', 'starting_sandbox', 'navigating', 'collecting_evidence', 'http_failed', 'browser_inspection', 'browser_completed', 'browser_skipped', 'browser_blocked', 'browser_failed', 'analyzing_email', 'building_report', 'completed', 'failed']),
   "message": zod.string().max(getScanResponseLatestProgressMessageMax),
   "completedSteps": zod.int().min(getScanResponseLatestProgressCompletedStepsMin),
-  "totalSteps": zod.int().min(1)
+  "totalSteps": zod.int().min(1),
+  "plan": zod.array(zod.object({
+  "id": zod.enum(['consent_target', 'sandbox', 'http', 'static', 'browser', 'report']),
+  "status": zod.enum(['pending', 'running', 'completed', 'skipped', 'failed', 'blocked']),
+  "reasonCode": zod.enum(['consent_checked', 'no_browser_required', 'redirect_blocked', 'not_html', 'static_body_limit', 'http_unavailable', 'http_fetch_failed', 'browser_error', 'earlier_step_failed', 'analysis_failed']).optional()
+})).min(getScanResponseLatestProgressPlanMin).max(getScanResponseLatestProgressPlanMax).optional()
 }).optional()
 })
 

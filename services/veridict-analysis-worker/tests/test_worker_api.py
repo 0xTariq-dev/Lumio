@@ -21,12 +21,13 @@ class FakeAnalyzer:
     async def prepare(self):
         return None
 
-    async def analyze(self, scan_id, _url, progress):
+    async def analyze(self, scan_id, _url, _task_plan, progress):
         self.started.set()
         if self.block:
             await self.release.wait()
         await progress("navigating")
         await progress("collecting_evidence")
+        await progress("browser_skipped", "no_browser_required")
         await progress("building_report")
         return {
             "scanId": scan_id,
@@ -198,6 +199,8 @@ class WorkerApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(b"event: progress", event_body)
             self.assertIn(b"event: completed", event_body)
             self.assertIn(b'"riskBand":"low"', event_body)
+            self.assertIn(b'"id":"browser","status":"skipped"', event_body)
+            self.assertIn(b'"executionPlan":[', event_body)
 
             scan_status, _, scan_body = await asgi_request(
                 self.app,

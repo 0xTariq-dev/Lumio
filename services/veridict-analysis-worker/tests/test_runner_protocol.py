@@ -69,6 +69,14 @@ class RunnerProtocolTests(unittest.IsolatedAsyncioTestCase):
             + b"\n"
             + json.dumps({"kind": "progress", "stage": "collecting_evidence"}).encode()
             + b"\n"
+            + json.dumps(
+                {
+                    "kind": "progress",
+                    "stage": "browser_skipped",
+                    "reasonCode": "no_browser_required",
+                }
+            ).encode()
+            + b"\n"
             + json.dumps({"kind": "report", "report": REPORT}).encode()
             + b"\n"
         )
@@ -86,19 +94,30 @@ class RunnerProtocolTests(unittest.IsolatedAsyncioTestCase):
         settings = WorkerSettings(token="x" * 40, guest_image=IMAGE)
         progress_events = []
 
-        async def progress(stage):
-            progress_events.append(stage)
+        async def progress(stage, reason_code=None):
+            progress_events.append((stage, reason_code))
 
         with patch("worker.microsandbox_runner.Sandbox.create", create):
             report = await MicrosandboxRunner(settings).analyze(
-                SCAN_ID, "https://example.com/path?private=value", progress
+                SCAN_ID,
+                "https://example.com/path?private=value",
+                ["http", "static", "browser", "report"],
+                progress,
             )
 
         self.assertEqual(report, REPORT)
-        self.assertEqual(progress_events, ["navigating", "collecting_evidence"])
+        self.assertEqual(
+            progress_events,
+            [
+                ("navigating", None),
+                ("collecting_evidence", None),
+                ("browser_skipped", "no_browser_required"),
+            ],
+        )
         command, args, kwargs = sandbox.command
         job = json.loads(kwargs["stdin"])
         self.assertEqual(job["url"], "https://example.com/path?private=value")
+        self.assertEqual(job["taskPlan"], ["http", "static", "browser", "report"])
         self.assertEqual(command, "/usr/local/bin/python")
         self.assertEqual(args, ["/opt/veridict/guest/scan_url.py"])
         self.assertEqual(kwargs["user"], "veridict")

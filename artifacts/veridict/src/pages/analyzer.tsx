@@ -43,8 +43,69 @@ const MAX_EMAIL_BYTES = 10 * 1024 * 1024;
 function stageIndex(stage?: string) {
   if (!stage) return 1;
   if (stage === 'validating' || stage === 'queued') return 1;
-  if (stage === 'building_report') return 3;
+  if (stage === 'building_report' || stage === 'completed' || stage === 'failed') return 3;
   return 2;
+}
+
+type ScanPlanStep = NonNullable<ScanProgress['plan']>[number];
+
+const planStepLabels: Record<ScanPlanStep['id'], string> = {
+  consent_target: 'Validate consent and public target',
+  sandbox: 'Start an isolated sandbox',
+  http: 'Inspect HTTP response and redirects',
+  static: 'Review static page signals',
+  browser: 'Inspect in a browser when needed',
+  report: 'Assemble the evidence report',
+};
+
+const planStatusLabels: Record<ScanPlanStep['status'], string> = {
+  pending: 'Waiting',
+  running: 'In progress',
+  completed: 'Completed',
+  skipped: 'Skipped',
+  failed: 'Failed',
+  blocked: 'Blocked',
+};
+
+const planReasonLabels: Record<NonNullable<ScanPlanStep['reasonCode']>, string> = {
+  consent_checked: 'Consent and public-target policy passed before dispatch.',
+  no_browser_required: 'Static signals did not meet the browser-inspection criteria.',
+  redirect_blocked: 'The redirect policy blocked browser navigation.',
+  not_html: 'The response was not HTML.',
+  static_body_limit: 'The response exceeded the static-inspection size limit.',
+  http_unavailable: 'The HTTP result was unavailable.',
+  http_fetch_failed: 'The HTTP request did not complete.',
+  browser_error: 'Browser inspection failed; coverage may be reduced.',
+  earlier_step_failed: 'Not run because an earlier step did not complete.',
+  analysis_failed: 'The step ended before completion.',
+};
+
+function ExecutionPlanList({ steps, testId }: { steps: ScanPlanStep[]; testId: string }) {
+  return (
+    <section className="mt-5" aria-label="Execution plan" data-testid={testId}>
+      <h3 className="text-sm font-semibold">Execution plan</h3>
+      <ol className="mt-3 space-y-2">
+        {steps.map((step) => (
+          <li key={step.id} className="flex items-start gap-3 rounded-lg border border-border px-3 py-2.5">
+            <span className={`mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full text-xs ${
+              step.status === 'completed' ? 'bg-emerald-600/10 text-emerald-700'
+                : step.status === 'running' ? 'bg-primary/10 text-primary'
+                  : step.status === 'failed' || step.status === 'blocked' ? 'bg-destructive/10 text-destructive'
+                    : step.status === 'skipped' ? 'bg-amber-500/10 text-amber-800'
+                      : 'bg-muted text-muted-foreground'
+            }`} aria-hidden="true">
+              {step.status === 'completed' ? '✓' : step.status === 'running' ? '…' : step.status === 'failed' || step.status === 'blocked' ? '!' : step.status === 'skipped' ? '–' : '·'}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">{planStepLabels[step.id]}</p>
+              {step.reasonCode && <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{planReasonLabels[step.reasonCode]}</p>}
+            </div>
+            <span className="shrink-0 pt-0.5 text-xs text-muted-foreground">{planStatusLabels[step.status]}</span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
 }
 
 function riskLabel(value: string) {
@@ -92,6 +153,8 @@ function escapeHtml(value: unknown) {
 }
 
 function reportHtml(report: ScanReport) {
+  const executionPlan = (report.executionPlan ?? []).map((step) => `
+    <li><strong>${escapeHtml(planStepLabels[step.id])}</strong> — ${escapeHtml(planStatusLabels[step.status])}${step.reasonCode ? `: ${escapeHtml(planReasonLabels[step.reasonCode])}` : ''}</li>`).join('');
   const findings = report.findings.map((finding) => `
     <article class="finding">
       <div class="meta">${escapeHtml(finding.severity)} · ${escapeHtml(finding.strength)} · ${escapeHtml(finding.source.replace(/_/g, ' '))}</div>
@@ -113,6 +176,7 @@ function reportHtml(report: ScanReport) {
     li{margin:7px 0}footer{border-top:1px solid #e4e4e7;margin-top:24px;padding-top:16px;color:#71717a;font-size:12px}
     @media print{body{background:white}main{margin:0 auto;border:0;padding:0}}
   </style><main><div class="meta">VERIDICT · EVIDENCE REPORT</div><h1>${escapeHtml(riskLabel(report.riskBand))} risk</h1><p class="meta">Completed ${escapeHtml(formatDate(report.completedAt))} · Rule set ${escapeHtml(report.ruleSetVersion)}</p>
+    ${executionPlan ? `<h2>Execution plan</h2><ol>${executionPlan}</ol>` : ''}
     <h2>Evidence and findings</h2>${findings || '<p>No findings were returned by the analyzer.</p>'}
     <h2>Coverage</h2><p>${report.coverage.sufficient ? 'Coverage marked sufficient by the analyzer.' : 'Coverage is limited; interpret this result with caution.'}</p><ul>${checks}</ul>
     ${links ? `<h2>Links found in email</h2><ul>${links}</ul>` : ''}
@@ -472,9 +536,10 @@ export default function AnalyzerPage() {
                 </div>
                 <div className="mt-5 rounded-lg border border-border bg-muted/30 px-4 py-3">
                   <p className="text-sm font-medium" data-testid="text-progress-message">{progressMessage}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{progress ? `${progress.completedSteps} of ${progress.totalSteps} reported steps complete` : 'Waiting for progress from the analyzer. Progress is reported by the scan service.'}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{progress ? `${progress.completedSteps} of ${progress.totalSteps} plan steps resolved` : 'Waiting for the scan service to publish its execution plan.'}</p>
                   {streamError && <p className="mt-2 text-xs text-muted-foreground" data-testid="status-stream-recovery">{streamError}</p>}
                 </div>
+                  {progress?.plan && <ExecutionPlanList steps={progress.plan} testId="live-execution-plan" />}
                 {scanQuery.isError && <p className="mt-3 text-sm text-muted-foreground">Unable to recover the latest status. Waiting for the live scan stream.</p>}
               </div>
             ) : activeReport ? (
@@ -614,6 +679,10 @@ function ReportView({
             ))}
           </ul>
         </section>
+
+        {!!report.executionPlan?.length && (
+          <ExecutionPlanList steps={report.executionPlan} testId="report-execution-plan" />
+        )}
 
         {attachments.length > 0 && (
           <section className="mt-6 rounded-lg border border-border bg-muted/20 p-4" aria-labelledby="attachment-title" data-testid="section-attachment-metadata">

@@ -28,6 +28,7 @@ MAX_FINDINGS = 50
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 NON_GET_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 RULE_SET_VERSION = "veridict-url-rules-2026-11-06"
+EXPECTED_TASK_PLAN = ("http", "static", "browser", "report")
 
 scrapling_log.setLevel(logging.CRITICAL + 1)
 
@@ -706,6 +707,9 @@ def _build_report(
 
 
 async def analyze(job: dict[str, Any]) -> dict[str, Any]:
+    task_plan = job.get("taskPlan")
+    if not isinstance(task_plan, list) or tuple(task_plan) != EXPECTED_TASK_PLAN:
+        raise ValueError("Unsupported analysis plan")
     scan_id = str(job["scanId"])
     raw_url = normalize_public_http_url(job["url"])
     timeout_seconds = _bounded_browser_timeout_seconds(
@@ -721,32 +725,72 @@ async def analyze(job: dict[str, Any]) -> dict[str, Any]:
     redirect_blocked = False
     fetch_failed = False
     try:
+        if "http" not in task_plan:
+            raise ValueError("HTTP inspection is not in the plan")
         response, redirect_urls, redirect_blocked, static_final_url = _static_fetch(raw_url)
         if response is None:
             fetch_failed = True
     except Exception:
         fetch_failed = True
 
-    emit({"kind": "progress", "stage": "collecting_evidence"})
+    if fetch_failed:
+        emit({
+            "kind": "progress",
+            "stage": "http_failed",
+            "reasonCode": "http_fetch_failed",
+        })
+    else:
+        emit({"kind": "progress", "stage": "collecting_evidence"})
     static: dict[str, Any] | None = None
-    if response is not None and not fetch_failed:
+    if "static" in task_plan and response is not None and not fetch_failed:
         static = _static_evidence(response, static_final_url)
 
     browser: dict[str, Any] | None = None
     browser_failed = False
     if (
+        "browser" in task_plan
+        and
         static
         and static.get("isHtml")
         and not static.get("oversized")
         and static.get("scriptCount", 0) > 0
         and not redirect_blocked
     ):
+        emit({"kind": "progress", "stage": "browser_inspection"})
         try:
             browser, browser_error = await _browser_evidence(raw_url, timeout_seconds)
             browser_failed = browser_error is not None or browser is None
         except Exception:
             browser_failed = True
+        emit({
+            "kind": "progress",
+            "stage": "browser_failed" if browser_failed else "browser_completed",
+            **({"reasonCode": "browser_error"} if browser_failed else {}),
+        })
+    else:
+        if redirect_blocked:
+            skip_reason = "redirect_blocked"
+            skip_stage = "browser_blocked"
+        elif fetch_failed or static is None:
+            skip_reason = "http_unavailable"
+            skip_stage = "browser_skipped"
+        elif static.get("oversized"):
+            skip_reason = "static_body_limit"
+            skip_stage = "browser_skipped"
+        elif not static.get("isHtml"):
+            skip_reason = "not_html"
+            skip_stage = "browser_skipped"
+        else:
+            skip_reason = "no_browser_required"
+            skip_stage = "browser_skipped"
+        emit({
+            "kind": "progress",
+            "stage": skip_stage,
+            "reasonCode": skip_reason,
+        })
 
+    if "report" not in task_plan:
+        raise ValueError("Report assembly is not in the plan")
     emit({"kind": "progress", "stage": "building_report"})
     return _build_report(
         scan_id,
